@@ -1,58 +1,107 @@
-from pathlib import Path  # NOTE: this is just a reminder to switch to pathlib!!
+from pathlib import Path
 
 import h5py
 import numpy as np
 from pyevtk.hl import imageToVTK
+from tqdm import tqdm
 
 
-# This function converts a version 7.3 mat file into a vti group for viewing in paraview
-def mat_v_to_vti(data_path, output_dir, output_filename, mask_data=True):
-    mask_tol = 0.001
+class PressureEstimationDataset:
+    # This is a data class that I am using to structure the PPE/STE pressure fields and inputs for the Methods Paper. Some assumptions have been made
+    # in order to streamline the data loading process, making this code unsuitable for general use without modification.
+    # COULD use matlab to load data but it's kind of annoying... will avoid for now
+    def __init__(self, name: str, dx: float, dt: int, snr: str) -> None:
 
-    # open mat file
-    with h5py.File(data_path, "r") as f:
-        # first, get pointers for velocity struct
-        v_pointers = f["v"][:]
+        # assemble paths
+        self.dx = dx
+        self.dt = dt
+        self.name = name
+        self.snr = snr
+        self.vel_dir = f"../../vwerp/UM13_vel_input/{dx}mm/{dt}ms/"
+        self.seg_dir = f"../../vwerp/UM13_vel_input/{dx}mm/"
+        self.results_dir = f"../../UM13_in_silico_results/{dx}mm/{dt}ms/{snr}/"
 
-        # access the images (matlab equivalent: v{1}.im)
-        u = f[v_pointers[0, 0]]["im"][:].T
-        v = f[v_pointers[1, 0]]["im"][:].T
-        w = f[v_pointers[2, 0]]["im"][:].T
+        self.vel_mask = self.load_vel_mask()
+        self.inlet = self.load_inlet()
+        self.outlet = self.load_outlet()
 
-        # access spatial resolution information (generally more important when NOT isotropic)
-        try:
-            dx = np.squeeze(f[v_pointers[0, 0]]["PixDim"][:]).tolist()
-        except KeyError:
-            dx = [0.001, 0.001, 0.001]  # defaulting to 1 mm isotropic
-            print("No spatial resolution information!")
+        # self.vel_dx = [1.0, 1.0, 1.0]
+        # self.vel_dt = 1.0
 
-        # access mask information
-        # If no mask, attempt to construct mask by summing velocity magnitude over time and excluding regions inside tolerance
-        # Note that this works well for in silico data, but will probably be a bit rough for in vivo data, especially if image artifacts are present
-        try:
-            mask = f["mask"][:].T
-        except KeyError:
-            mask = np.sum(np.sqrt(u**2 + v**2 + w**2), axis=3)
-            mask = np.asarray(mask > mask_tol, dtype=float)
-            print("No mask information!")
+    def load_velocity(self):
+        # load timeframe 1
+        # check for Nt in .res attribute
+        with h5py.File(
+            self.vel_dir + f"UM13_{self.dx}mm_{self.dt}ms_v_1.mat", "r"
+        ) as f:
+            v_pointers = f["v"][:]
+            u = f[v_pointers[0, 0]]["im"][:].T
+            v = f[v_pointers[1, 0]]["im"][:].T
+            w = f[v_pointers[2, 0]]["im"][:].T
+            self.vel_dx = np.squeeze(f[v_pointers[0, 0]]["PixDim"][:]).tolist()
+            res = np.squeeze(f[v_pointers[0, 0]]["res"][:]).astype(int).tolist()
+            self.vel_dt = np.squeeze(f[v_pointers[0, 0]]["dt"][:])
 
-    # make sure output path exists, create directory if not
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+        Nt = res[-1]
 
-    # write mask itself and mask velocity field, if desired
-    if mask_data:
-        out_path = f"{output_dir}/{output_filename}_mask"
-        imageToVTK(out_path, spacing=dx, cellData={"mask": mask})
-        u *= mask[:, :, :, np.newaxis]
-        v *= mask[:, :, :, np.newaxis]
-        w *= mask[:, :, :, np.newaxis]
+        velocity = np.empty([3] + res)
+        velocity[0, :, :, :, 0] = u
+        velocity[1, :, :, :, 0] = v
+        velocity[2, :, :, :, 0]
+        # load rest of data in for loop
 
-    # write velocity field one timestep at a time
-    T = u.shape[3]
-    for t in range(T):
-        vel = (u[:, :, :, t], v[:, :, :, t], w[:, :, :, t])
-        out_path = f"{output_dir}/{output_filename}_{t:03d}"
-        imageToVTK(out_path, spacing=dx, cellData={"Velocity": vel})
+        for i in range(1, Nt):
+            # open mat file
+            with h5py.File(
+                self.vel_dir + f"UM13_{self.dx}mm_{self.dt}ms_v_{i}.mat", "r"
+            ) as f:
+                # first, get pointers for velocity struct
+                v_pointers = f["v"][:]
+
+                # access the images (matlab equivalent: v{1}.im)
+                velocity[0, :, :, :, i] = f[v_pointers[0, 0]]["im"][:].T
+                velocity[1, :, :, :, i] = f[v_pointers[1, 0]]["im"][:].T
+                velocity[2, :, :, :, i] = f[v_pointers[2, 0]]["im"][:].T
+
+        self.velocity_data = velocity
+
+    def load_vel_mask(self):
+        with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_mask.mat", "r") as f:
+            vel_mask = f["mask"][:].T
+        return vel_mask
+
+    def load_inlet(self):
+        with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_inlet.mat", "r") as f:
+            inlet_mask = f["inlet"][:].T
+        return inlet_mask
+
+    def load_outlet(self):
+        with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_outlet.mat", "r") as f:
+            outlet_mask = f["outlet"][:].T
+        return outlet_mask
+
+    def export_velocity_to_vti(self, output_dir, mask_data=False):
+        # make sure output path exists, create directory if not
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        # write mask itself and mask velocity field, if desired
+        if mask_data:
+            out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_v_mask"
+            imageToVTK(out_path, spacing=self.vel_dx, cellData={"mask": self.mask})
+            u *= self.mask[:, :, :, np.newaxis]
+            v *= self.mask[:, :, :, np.newaxis]
+            w *= self.mask[:, :, :, np.newaxis]
+
+        # write velocity field one timestep at a time
+        Nt = self.velocity_data.shape[-1]
+        print(f"Exporting velocity field {self.dx} x {self.dt}")
+        for t in tqdm(range(Nt)):
+            u = self.velocity_data[0, :, :, :, t].copy()
+            v = self.velocity_data[1, :, :, :, t].copy()
+            w = self.velocity_data[2, :, :, :, t].copy()
+            vel = (u, v, w)
+            out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_v_{t:03d}"
+            imageToVTK(out_path, spacing=self.vel_dx, cellData={"Velocity": vel})
 
 
 # This function converts a v7.3 mat pressure dataset to a vti group for viewing in paraview
@@ -126,74 +175,14 @@ def mat_p_err_to_vti(data_path, output_dir, output_filename, mask_data=False):
     T = P.shape[3]
     for t in range(T):
         p = P[:, :, :, t]
-        out_path = f"{output_dir}/{output_filename}_{t:03d}"
+        out_path = f"{output_dir}/{output_filename}_{t:02d}"
         imageToVTK(
             out_path, spacing=dx, cellData={"Relative Pressure Absolute Error": p}
         )
 
 
-# OLD CODE FOR DOING ENTIRE CONVERSION RUN-THROUGH AT ONCE
-"""
-def make_baseline_visualizations():
-    spatial = ['0.75', '1.5', '3']
-    temporal = ['10', '20', '40', '60']
-
-    for dx in spatial:
-        for dt in temporal:
-            print(f"Converting {dx}mm - {dt}ms...")
-
-            data_path_pressure = f"UM13_in_silico_results/{dx}mm/{dt}ms/baseline/UM13_{dx}mm_{dt}ms_P_STE.mat"
-            data_path_error = f"UM13_in_silico_results/{dx}mm/{dt}ms/baseline/UM13_{dx}mm_{dt}ms_P_error.mat"
-
-            pressure_output_dir = f"UM13_in_silico_results/baseline_pressure_vti/{dx}mm/{dt}ms"
-            error_output_dir = f"UM13_in_silico_results/baseline_error_vti/{dx}mm/{dt}ms"
-
-            pressure_out_filename = f"UM13_{dx}mm_{dt}ms_P_STE_baseline"     #vti is automatically appended
-            error_out_filename = f"UM13_{dx}mm_{dt}ms_P_error_baseline"
-
-            mat_p_to_vti(data_path_pressure, pressure_output_dir, pressure_out_filename)
-            mat_p_err_to_vti(data_path_error, error_output_dir, error_out_filename)
-
-
-def make_noise_visualizations():
-    spatial = ['0.75', '1.5', '3']
-    temporal = ['10', '20', '40', '60']
-    noise = ['SNR10', 'SNR30']
-
-    for dx in spatial:
-        for dt in temporal:
-            for snr in noise:
-                # always use 25th iteration because that's the one that has the velocity field with it...
-                data_path_pressure = f"UM13_in_silico_results/{dx}mm/{dt}ms/{snr}/STE_25.mat"
-                data_path_error = f"UM13_in_silico_results/{dx}mm/{dt}ms/{snr}/P_error_25.mat"
-
-                pressure_output_dir = f"UM13_in_silico_results/noise_pressure_vti/{dx}mm/{dt}ms/{snr}"
-                error_output_dir = f"UM13_in_silico_results/noise_error_vti/{dx}mm/{dt}ms/{snr}"
-
-                pressure_out_filename = f"UM13_{dx}mm_{dt}ms_{snr}_P_STE_25"     #vti is automatically appended
-                error_out_filename = f"UM13_{dx}mm_{dt}ms_{snr}_P_error_25"
-
-                mat_p_to_vti(data_path_pressure, pressure_output_dir, pressure_out_filename)
-                mat_p_err_to_vti(data_path_error, error_output_dir, error_out_filename)
-"""
-
-
 def main():
     """
-    temporal = ['10ms', '20ms', '40ms', '60ms']
-    spatial = ['0.75mm', '1.5mm', '3mm']
-
-    for dx in spatial:
-        for dt in temporal:
-
-            data_path_vel_CFD = f'../Relative Pressure Estimation/in_silico/UM13_systole/pressure_estimation/mat_files_{dx}/UM13_{dx}_{dt}.mat'
-
-            vel_output_dir = f'D:/UM13/velocity_visualizations_updated/{dx}/{dt}'
-            vel_output_filename = f'UM13_{dx}_{dt}_V'
-
-            mat_v_to_vti(data_path_vel_CFD, vel_output_dir, vel_output_filename, mask_data=True)
-    """
-
     noise_levels = ["SNR10", "SNR30", "SNRinf"]
 
     for snr in noise_levels:
@@ -205,6 +194,23 @@ def main():
         mat_v_to_vti(
             data_path_vel, vel_output_dir, vel_output_filename, mask_data=False
         )
+    """
+
+    # it would be fun to turn this into a command line tool :)
+
+    spatial = [1.5, 2.0, 3.0]
+    temporal = [60, 40, 20]
+
+    for dx in spatial:
+        for dt in temporal:
+            current_dataset = PressureEstimationDataset("current", dx, dt, "SNRinf")
+
+            current_dataset.load_velocity()
+            current_dataset.export_velocity_to_vti(
+                f"../../methods_paper_vti/UM13_velocity_input_vti/{dx}mm/{dt}ms/{current_dataset.snr}"
+            )
+
+            del current_dataset
 
 
 if __name__ == "__main__":
