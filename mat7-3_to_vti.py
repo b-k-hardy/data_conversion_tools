@@ -72,13 +72,29 @@ class PressureEstimationDataset:
             + f"UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_{iter}.mat",
             "r",
         ) as file:
+
             p_pointer = file[f"p_{method.upper()}"][:]
             self.pres_dx = np.squeeze(file[p_pointer[0, 0]]["dx"][:]).tolist()
             self.pres_mask = file[p_pointer[0, 0]]["mask"][:].T
             if method.upper() == "STE":
                 self.ste_result = file[p_pointer[0, 0]]["im"][:].T
-            if method.upper() == "PPE":
+            elif method.upper() == "PPE":
                 self.ppe_result = file[p_pointer[0, 0]]["im"][:].T
+
+    def load_error(self, method: str, iter: int):
+
+        with h5py.File(
+            self.results_dir
+            + f"UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_ERR_{iter}.mat",
+            "r",
+        ) as file:
+
+            self.err_dx = np.squeeze(file["dx"][:]).tolist()
+            self.err_mask = file["mask"][:].T
+            if method.upper() == "STE":
+                self.ste_err = file["P_ERR"][:].T
+            elif method.upper() == "PPE":
+                self.ppe_err = file["P_ERR"][:].T
 
     def load_vel_mask(self):
         with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_mask.mat", "r") as f:
@@ -129,6 +145,7 @@ class PressureEstimationDataset:
             imageToVTK(
                 out_path, spacing=self.pres_dx, cellData={"mask": self.pres_mask}
             )
+            # FIXME: meaningless line below...
             P *= self.pres_mask[:, :, :, np.newaxis]
 
         # write pressure field one timestep at a time
@@ -141,47 +158,27 @@ class PressureEstimationDataset:
                 out_path, spacing=self.pres_dx, cellData={"Relative Pressure": p}
             )
 
-    def export_error_to_vti(self, output_dir, mask_data=False):
-        return -1
+    def export_error_to_vti(self, output_dir, method: str, mask_data=False):
+        # make sure output path exists, create directory if not
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
 
+        # write mask itself and mask velocity field, if desired
+        if mask_data:
+            out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_mask"
+            imageToVTK(out_path, spacing=self.err_dx, cellData={"mask": self.err_mask})
+            P *= self.err_mask[:, :, :, np.newaxis]
 
-def mat_p_err_to_vti(data_path, output_dir, output_filename, mask_data=False):
-    mask_tol = 0.0
-
-    with h5py.File(data_path, "r") as f:
-        P = f["P_ERR"][:].T
-        try:
-            dx = np.squeeze(f["dx"][:]).tolist()
-        except KeyError:
-            print("No spatial resolution information!")
-
-        # access mask information
-        # If no mask, attempt to construct mask by summing velocity magnitude over time and excluding regions inside tolerance
-        # Note that this works well for in silico data, but will probably be a bit rough for in vivo data, especially if image artifacts are present
-        try:
-            mask = f["mask"][:].T
-        except KeyError:
-            mask = np.sum(P, axis=3)
-            mask = np.asarray(mask > mask_tol, dtype=float)
-            print("No mask information!")
-
-    # make sure output path exists, create directory if not
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    # write mask itself and mask velocity field, if desired
-    if mask_data:
-        out_path = f"{output_dir}/{output_filename}_mask"
-        imageToVTK(out_path, spacing=dx, cellData={"mask": mask})
-        P *= mask[:, :, :, np.newaxis]
-
-    # write pressure error field one timestep at a time
-    T = P.shape[3]
-    for t in range(T):
-        p = P[:, :, :, t]
-        out_path = f"{output_dir}/{output_filename}_{t:02d}"
-        imageToVTK(
-            out_path, spacing=dx, cellData={"Relative Pressure Absolute Error": p}
-        )
+        # write pressure error field one timestep at a time
+        # FIXME: forcing STE here too
+        Nt = self.ste_err.shape[-1]
+        for t in tqdm(range(Nt)):
+            p = self.ste_err[:, :, :, t].copy()
+            out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_{t:02d}"
+            imageToVTK(
+                out_path,
+                spacing=self.err_dx,
+                cellData={"Relative Pressure Absolute Error": p},
+            )
 
 
 def export_baseline_velocity(dx_list=[1.5, 2.0, 3.0], dt_list=[60, 40, 20]):
