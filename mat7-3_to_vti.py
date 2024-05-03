@@ -2,6 +2,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from add_noise import add_complex_noise
 from pyevtk.hl import imageToVTK
 from tqdm import tqdm
 
@@ -22,8 +23,8 @@ class PressureEstimationDataset:
         self.results_dir = f"../../UM13_in_silico_results/{dx}mm/{dt}ms/{snr}/"
 
         self.vel_mask = self.load_vel_mask()
-        self.inlet = self.load_inlet()
-        self.outlet = self.load_outlet()
+        # self.inlet = self.load_inlet()
+        # self.outlet = self.load_outlet()
 
         # self.vel_dx = [1.0, 1.0, 1.0]
         # self.vel_dt = 1.0
@@ -42,15 +43,15 @@ class PressureEstimationDataset:
             res = np.squeeze(f[v_pointers[0, 0]]["res"][:]).astype(int).tolist()
             self.vel_dt = np.squeeze(f[v_pointers[0, 0]]["dt"][:])
 
-        Nt = res[-1]
+        n_t = res[-1]
 
         velocity = np.empty([3] + res)
         velocity[0, :, :, :, 0] = u
         velocity[1, :, :, :, 0] = v
-        velocity[2, :, :, :, 0]
+        velocity[2, :, :, :, 0] = w
         # load rest of data in for loop
 
-        for i in range(1, Nt):
+        for i in range(1, n_t):
             # open mat file
             with h5py.File(
                 self.vel_dir + f"UM13_{self.dx}mm_{self.dt}ms_v_{i}.mat", "r"
@@ -90,25 +91,25 @@ class PressureEstimationDataset:
         ) as file:
 
             self.err_dx = np.squeeze(file["dx"][:]).tolist()
-            self.err_mask = file["mask"][:].T
+            self.err_mask = np.asarray(file["mask"]).T
             if method.upper() == "STE":
-                self.ste_err = file["P_ERR"][:].T
+                self.ste_err = np.asarray(file["P_ERR"]).T
             elif method.upper() == "PPE":
-                self.ppe_err = file["P_ERR"][:].T
+                self.ppe_err = np.asarray(file["P_ERR"]).T
 
     def load_vel_mask(self):
         with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_mask.mat", "r") as f:
-            vel_mask = f["mask"][:].T
+            vel_mask = np.asarray(f["mask"]).T
         return vel_mask
 
     def load_inlet(self):
         with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_inlet.mat", "r") as f:
-            inlet_mask = f["inlet"][:].T
+            inlet_mask = np.asarray(f["inlet"]).T
         return inlet_mask
 
     def load_outlet(self):
         with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_outlet.mat", "r") as f:
-            outlet_mask = f["outlet"][:].T
+            outlet_mask = np.asarray(f["outlet"]).T
         return outlet_mask
 
     def export_velocity_to_vti(self, output_dir, mask_data=False):
@@ -118,15 +119,15 @@ class PressureEstimationDataset:
         # write mask itself and mask velocity field, if desired
         if mask_data:
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_v_mask"
-            imageToVTK(out_path, spacing=self.vel_dx, cellData={"mask": self.mask})
-            u *= self.mask[:, :, :, np.newaxis]
-            v *= self.mask[:, :, :, np.newaxis]
-            w *= self.mask[:, :, :, np.newaxis]
+            imageToVTK(out_path, spacing=self.vel_dx, cellData={"mask": self.vel_mask})
+            u *= self.vel_mask[:, :, :, np.newaxis]
+            v *= self.vel_mask[:, :, :, np.newaxis]
+            w *= self.vel_mask[:, :, :, np.newaxis]
 
         # write velocity field one timestep at a time
-        Nt = self.velocity_data.shape[-1]
+        n_timesteps = self.velocity_data.shape[-1]
         print(f"Exporting velocity field {self.dx} x {self.dt}")
-        for t in tqdm(range(Nt)):
+        for t in tqdm(range(n_timesteps)):
             u = self.velocity_data[0, :, :, :, t].copy()
             v = self.velocity_data[1, :, :, :, t].copy()
             w = self.velocity_data[2, :, :, :, t].copy()
@@ -181,8 +182,13 @@ class PressureEstimationDataset:
             )
 
 
-def export_baseline_velocity(dx_list=[1.5, 2.0, 3.0], dt_list=[60, 40, 20]):
+def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> None:
+    """Function to automate the export of baseline velocity fields to VTI format.
 
+    Args:
+        dx_list (tuple, optional): List of spatial resolutions to convert. Defaults to (1.5, 2.0, 3.0).
+        dt_list (tuple, optional): List of temporal resolutions to convert. Defaults to (60, 40, 20).
+    """
     for dx in dx_list:
         for dt in dt_list:
             current_dataset = PressureEstimationDataset("current", dx, dt, "SNRinf")
@@ -209,20 +215,23 @@ def main():
             data_path_vel, vel_output_dir, vel_output_filename, mask_data=False
         )
     """
+    export_baseline_velocity(dx_list=[1.5], dt_list=[20])
 
+    """
     dx_list = [1.5, 2.0, 3.0]
     dt_list = [60, 40, 20]
 
     for dx in dx_list:
         for dt in dt_list:
-            current_dataset = PressureEstimationDataset("current", dx, dt, "SNR10")
+            current_dataset = PressureEstimationDataset("current", dx, dt, "SNRinf")
 
-            current_dataset.load_pressure("STE", 1)
-            current_dataset.export_pressure_to_vti(
-                f"../../methods_paper_vti/UM13_pressure_output_vti/{dx}mm/{dt}ms/{current_dataset.snr}/STE",
+            current_dataset.load_error("STE", 1)
+            current_dataset.export_error_to_vti(
+                f"../../methods_paper_vti/UM13_error_output_vti/{dx}mm/{dt}ms/{current_dataset.snr}/STE",
                 "STE",
             )
-            del current_dataset
+            del current_dataset  
+    """
 
     # it would be fun to turn this into a command line tool :)
 
