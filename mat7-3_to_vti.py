@@ -13,18 +13,12 @@ class PressureEstimationDataset:
     # in order to streamline the data loading process, making this code unsuitable for general use without modification.
     # COULD use matlab to load data but it's kind of annoying... will avoid for now
     def __init__(
-        self,
-        name: str,
-        dx: float,
-        dt: int,
-        snr: str,
-        load: tuple = ("err", "vel", "pres"),
+        self, dx: float, dt: int, snr: str, load: tuple = ("err", "vel", "pres")
     ) -> None:
 
         # assemble paths
         self.dx = dx
         self.dt = dt
-        self.name = name
         self.snr = snr
         self.vel_dir = f"../../vwerp/UM13_vel_input/{dx}mm/{dt}ms/"
         self.seg_dir = f"../../vwerp/UM13_vel_input/{dx}mm/"
@@ -36,8 +30,12 @@ class PressureEstimationDataset:
         # self.inlet = self.load_inlet()
         # self.outlet = self.load_outlet()
 
-    # FIXME: can probably Type the output better?
-    def load_velocity(self) -> tuple:
+    def load_velocity(self) -> tuple[np.ndarray, list, float]:
+        """Loads the velocity field used as input
+
+        Returns:
+            tuple[np.ndarray, list, float]: tuple containing velocity field, spatial resolution (as a list) and temporal resolution
+        """
         # load timeframe 1 and check for resolution attribute
         with h5py.File(f"{self.vel_dir}UM13_{self.dx}mm_{self.dt}ms_v_1.mat") as f:
             v_pointers = f["v"][:]
@@ -46,9 +44,9 @@ class PressureEstimationDataset:
             w = f[v_pointers[2, 0]]["im"][:].T
             vel_dx = np.squeeze(f[v_pointers[0, 0]]["PixDim"][:]).tolist()
             res = np.squeeze(f[v_pointers[0, 0]]["res"][:]).astype(int).tolist()
-            vel_dt = np.squeeze(f[v_pointers[0, 0]]["dt"][:])
+            vel_dt = float(np.squeeze(f[v_pointers[0, 0]]["dt"][:]))
 
-        n_t = res[-1]
+        n_timesteps = res[-1]
 
         velocity = np.empty([3] + res)
         velocity[0, :, :, :, 0] = u
@@ -56,7 +54,7 @@ class PressureEstimationDataset:
         velocity[2, :, :, :, 0] = w
         # load rest of data in for loop
 
-        for i in range(1, n_t):
+        for i in range(1, n_timesteps):
             # open mat file
             with h5py.File(
                 f"{self.vel_dir}UM13_{self.dx}mm_{self.dt}ms_v_{i}.mat"
@@ -94,9 +92,7 @@ class PressureEstimationDataset:
         """
 
         with h5py.File(
-            self.results_dir
-            + f"UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_ERR_{realization}.mat",
-            "r",
+            f"{self.results_dir}UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_ERR_{realization}.mat"
         ) as file:
 
             self.err_dx = np.squeeze(file["dx"][:]).tolist()
@@ -106,19 +102,35 @@ class PressureEstimationDataset:
             elif method.upper() == "PPE":
                 self.ppe_err = np.asarray(file["P_ERR"]).T
 
-    # NOTE: this format is probably a lot better than just adding shit INSIDE the functions... linter definitely seems to agree with me here
-    def load_vel_mask(self):
-        with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_mask.mat", "r") as f:
+    # NOTE: this format is probably a lot better than just adding shit INSIDE the functions...
+    # linter definitely seems to agree with me here
+    def load_vel_mask(self) -> np.ndarray:
+        """Load mask used for input in STE/PPE/vWERP
+
+        Returns:
+            np.ndarray: binary mask used for velocity field
+        """
+        with h5py.File(f"{self.seg_dir}UM13_{self.dx}mm_mask.mat") as f:
             vel_mask = np.asarray(f["mask"]).T
         return vel_mask
 
-    def load_inlet(self):
-        with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_inlet.mat", "r") as f:
+    def load_inlet(self) -> np.ndarray:
+        """Function to load inlet mask
+
+        Returns:
+            np.ndarray: Binary inlet mask
+        """
+        with h5py.File(f"{self.seg_dir}UM13_{self.dx}mm_inlet.mat") as f:
             inlet_mask = np.asarray(f["inlet"]).T
         return inlet_mask
 
-    def load_outlet(self):
-        with h5py.File(self.seg_dir + f"UM13_{self.dx}mm_outlet.mat", "r") as f:
+    def load_outlet(self) -> np.ndarray:
+        """Function to load outlet mask
+
+        Returns:
+            np.ndarray: Binary outlet mask
+        """
+        with h5py.File(f"{self.seg_dir}UM13_{self.dx}mm_outlet.mat") as f:
             outlet_mask = np.asarray(f["outlet"]).T
         return outlet_mask
 
@@ -157,44 +169,59 @@ class PressureEstimationDataset:
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_v_{t:02d}"
             imageToVTK(out_path, spacing=self.vel_dx, cellData={"Velocity": vel})
 
-    def export_pressure_to_vti(self, output_dir, method: str, mask_data=False) -> None:
+    def export_pressure_to_vti(
+        self, output_dir: str, method: str, mask_data=False
+    ) -> None:
+        """Function to export pressure fields to VTI format.
+
+        Args:
+            output_dir (str): Directory to export pressure to. Does not need trailing slash.
+            method (str): STE or PPE
+            mask_data (bool, optional): Whether or not mask will be exported. Defaults to False.
+        """
 
         # make sure output path exists, create directory if not
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        # write mask itself and mask velocity field, if desired
+        # write mask itself
         if mask_data:
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_mask"
             imageToVTK(
                 out_path, spacing=self.pres_dx, cellData={"mask": self.pres_mask}
             )
-            # FIXME: meaningless line below...
-            P *= self.pres_mask[:, :, :, np.newaxis]
 
         # write pressure field one timestep at a time
         # FIXME: I'M CURRENTLY FORCING STE
-        Nt = self.ste_result.shape[-1]
-        for t in tqdm(range(Nt)):
+        n_timesteps = self.ste_result.shape[-1]
+        for t in tqdm(range(n_timesteps)):
             p = self.ste_result[:, :, :, t].copy()
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_{t:02d}"
             imageToVTK(
                 out_path, spacing=self.pres_dx, cellData={"Relative Pressure": p}
             )
 
-    def export_error_to_vti(self, output_dir, method: str, mask_data=False) -> None:
+    def export_error_to_vti(
+        self, output_dir: str, method: str, mask_data=False
+    ) -> None:
+        """Function to export error fields to VTI format.
+
+        Args:
+            output_dir (str): Directory to export pressure to. Does not need trailing slash.
+            method (str): STE or PPE
+            mask_data (bool, optional): Whether or not to export error mask. Defaults to False.
+        """
         # make sure output path exists, create directory if not
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        # write mask itself and mask velocity field, if desired
+        # write mask itself
         if mask_data:
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_mask"
             imageToVTK(out_path, spacing=self.err_dx, cellData={"mask": self.err_mask})
-            P *= self.err_mask[:, :, :, np.newaxis]
 
         # write pressure error field one timestep at a time
         # FIXME: forcing STE here too
-        Nt = self.ste_err.shape[-1]
-        for t in tqdm(range(Nt)):
+        n_timesteps = self.ste_err.shape[-1]
+        for t in tqdm(range(n_timesteps)):
             p = self.ste_err[:, :, :, t].copy()
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_{t:02d}"
             imageToVTK(
