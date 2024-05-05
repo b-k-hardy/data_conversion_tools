@@ -16,11 +16,15 @@ from tqdm import tqdm
 
 # FIXME: I might want to split this up further? Maybe separate classes that are linked somehow? Not sure...
 class PressureEstimationDataset:
-    # This is a data class that I am using to structure the PPE/STE pressure fields and inputs for the Methods Paper. Some assumptions have been made
-    # in order to streamline the data loading process, making this code unsuitable for general use without modification.
-    # COULD use matlab to load data but it's kind of annoying... will avoid for now
+    """This is a data class that I am using to structure the PPE/STE pressure fields and inputs for the Methods Paper.
+    Some assumptions have been made in order to streamline the data loading process, making this code unsuitable
+    for general use without modification.COULD use matlab to load data but it's kind of annoying... will avoid for now
+
+    #FIXME: list args, methods, attributes, etc. in docstring
+    """
+
     def __init__(
-        self, dx: float, dt: int, snr: str, load: tuple = ("err", "vel", "pres")
+        self, dx: float, dt: int, snr: str, load: tuple = ("vel", "ste")
     ) -> None:
 
         # assemble paths
@@ -34,6 +38,18 @@ class PressureEstimationDataset:
         if "vel" in load:
             self.vel_mask = self.load_vel_mask()
             self.velocity_data, self.vel_dx, self.vel_dt = self.load_velocity()
+
+        if "ste" in load:
+            self.ste = self.load_pressure("ste", 1)
+
+        if "ste_err" in load:
+            self.ste_err = self.load_error("ste", 1)
+
+        if "ppe" in load:
+            self.ppe = self.load_pressure("ppe", 1)
+
+        if "ppe_err" in load:
+            self.ppe_err = self.load_error("ppe", 1)
         # self.inlet = self.load_inlet()
         # self.outlet = self.load_outlet()
 
@@ -77,38 +93,50 @@ class PressureEstimationDataset:
 
         return velocity, vel_dx, vel_dt
 
-    def load_pressure(self, method: str, iteration: int):
+    def load_pressure(self, method: str, realization: int) -> dict:
+        """Function to load pressure field and associated attributes for ppe or ste method.
+
+        Args:
+            method (str): PPE or STE
+            realization (int): Noise realization number to load
+
+        Returns:
+            dict: Dictionary containing dx, mask and pressure field.
+        """
+
+        pres_dict = {}
         with h5py.File(
-            f"{self.results_dir}UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_{iteration}.mat",
-            "r",
+            f"{self.results_dir}UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_{realization}.mat",
         ) as file:
 
             p_pointer = file[f"p_{method.upper()}"][:]
-            self.pres_dx = np.squeeze(file[p_pointer[0, 0]]["dx"][:]).tolist()
-            self.pres_mask = file[p_pointer[0, 0]]["mask"][:].T
-            if method.upper() == "STE":
-                self.ste_result = file[p_pointer[0, 0]]["im"][:].T
-            elif method.upper() == "PPE":
-                self.ppe_result = file[p_pointer[0, 0]]["im"][:].T
+            pres_dict["dx"] = np.squeeze(file[p_pointer[0, 0]]["dx"][:]).tolist()
+            pres_dict["mask"] = file[p_pointer[0, 0]]["mask"][:].T
+            pres_dict["pressure"] = file[p_pointer[0, 0]]["im"][:].T
 
-    def load_error(self, method: str, realization: int) -> None:
+        return pres_dict
+
+    def load_error(self, method: str, realization: int) -> dict:
         """Function to load error field for ppe or ste method.
 
         Args:
             method (str): STE or PPE.
             iteration (int): Which noise realization to load
+
+        Returns:
+            dict: Dictionary containing dx, mask and error field.
         """
 
+        err_dict = {}
         with h5py.File(
             f"{self.results_dir}UM13_{self.dx}mm_{self.dt}ms_{self.snr}_{method}_ERR_{realization}.mat"
         ) as file:
 
-            self.err_dx = np.squeeze(file["dx"][:]).tolist()
-            self.err_mask = np.asarray(file["mask"]).T
-            if method.upper() == "STE":
-                self.ste_err = np.asarray(file["P_ERR"]).T
-            elif method.upper() == "PPE":
-                self.ppe_err = np.asarray(file["P_ERR"]).T
+            err_dict["dx"] = np.squeeze(file["dx"][:]).tolist()
+            err_dict["mask"] = np.asarray(file["mask"]).T
+            err_dict["err"] = np.asarray(file["P_ERR"]).T
+
+        return err_dict
 
     # NOTE: this format is probably a lot better than just adding shit INSIDE the functions...
     # linter definitely seems to agree with me here
@@ -142,7 +170,13 @@ class PressureEstimationDataset:
             outlet_mask = np.asarray(f["outlet"]).T
         return outlet_mask
 
-    def export_velocity_to_vti(self, output_dir, mask_data=False) -> None:
+    def export_velocity_to_vti(self, output_dir: str, mask_data: bool = False) -> None:
+        """Function to export velocity fields to VTI format.
+
+        Args:
+            output_dir (str): Location to export to. DOES need trailing slash.
+            mask_data (bool, optional): Whether or not to export velocity mask. Defaults to False.
+        """
         # make sure output path exists, create directory if not
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -187,6 +221,11 @@ class PressureEstimationDataset:
             mask_data (bool, optional): Whether or not mask will be exported. Defaults to False.
         """
 
+        if method == "STE":
+            pres_dict = self.ste
+        elif method == "PPE":
+            pres_dict = self.ppe
+
         # make sure output path exists, create directory if not
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -194,17 +233,16 @@ class PressureEstimationDataset:
         if mask_data:
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_mask"
             imageToVTK(
-                out_path, spacing=self.pres_dx, cellData={"mask": self.pres_mask}
+                out_path, spacing=pres_dict["dx"], cellData={"mask": pres_dict["mask"]}
             )
 
         # write pressure field one timestep at a time
-        # FIXME: I'M CURRENTLY FORCING STE
-        n_timesteps = self.ste_result.shape[-1]
+        n_timesteps = pres_dict["pressure"].shape[-1]
         for t in tqdm(range(n_timesteps)):
-            p = self.ste_result[:, :, :, t].copy()
+            p = pres_dict["pressure"][:, :, :, t].copy()
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_{t:02d}"
             imageToVTK(
-                out_path, spacing=self.pres_dx, cellData={"Relative Pressure": p}
+                out_path, spacing=pres_dict["dx"], cellData={"Relative Pressure": p}
             )
 
     def export_error_to_vti(
@@ -217,23 +255,30 @@ class PressureEstimationDataset:
             method (str): STE or PPE
             mask_data (bool, optional): Whether or not to export error mask. Defaults to False.
         """
+
+        if method == "STE":
+            err_dict = self.ste_err
+        elif method == "PPE":
+            err_dict = self.ppe_err
+
         # make sure output path exists, create directory if not
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         # write mask itself
         if mask_data:
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_mask"
-            imageToVTK(out_path, spacing=self.err_dx, cellData={"mask": self.err_mask})
+            imageToVTK(
+                out_path, spacing=err_dict["dx"], cellData={"mask": err_dict["mask"]}
+            )
 
         # write pressure error field one timestep at a time
-        # FIXME: forcing STE here too
-        n_timesteps = self.ste_err.shape[-1]
+        n_timesteps = err_dict["err"][-1]
         for t in tqdm(range(n_timesteps)):
             p = self.ste_err[:, :, :, t].copy()
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_{t:02d}"
             imageToVTK(
                 out_path,
-                spacing=self.err_dx,
+                spacing=err_dict["dx"],
                 cellData={"Relative Pressure Absolute Error": p},
             )
 
@@ -257,6 +302,7 @@ def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> N
 
 
 def main():
+    # FIXME: EXPORT PPE STUFF NOW
     """
     noise_levels = ["SNR10", "SNR30", "SNRinf"]
 
