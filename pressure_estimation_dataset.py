@@ -1,3 +1,11 @@
+""" Module defining the PressureEstimationDataset class.
+
+    This data class has evolved from mat7-3_to_vti.py, which I initially used as a converter tool
+    to convert between MATLAB to VTK formats. I have since expanded the functionality to include 
+    a full data class with more methods with a few fixed paths to fit with the UM13 dataset for the
+    methods paper. This class is not intended for general use, but can be modified for future use.
+"""
+
 from pathlib import Path
 
 import h5py
@@ -34,7 +42,8 @@ class PressureEstimationDataset:
         """Loads the velocity field used as input
 
         Returns:
-            tuple[np.ndarray, list, float]: tuple containing velocity field, spatial resolution (as a list) and temporal resolution
+            tuple[np.ndarray, list, float]: tuple containing velocity field,
+            spatial resolution (as a list) and temporal resolution
         """
         # load timeframe 1 and check for resolution attribute
         with h5py.File(f"{self.vel_dir}UM13_{self.dx}mm_{self.dt}ms_v_1.mat") as f:
@@ -147,21 +156,20 @@ class PressureEstimationDataset:
         n_timesteps = self.velocity_data.shape[-1]
         print(f"Exporting velocity field {self.dx} x {self.dt}")
         for t in tqdm(range(n_timesteps)):
+
+            # DINGUS YOU MASKED AND THEN ADDED NOISE...
             u = (
-                self.velocity_data[0, :, :, :, t].copy()
-                * self.vel_mask[:, :, :, np.newaxis]
+                self.velocity_data[0, :, :, :, t].copy() * self.vel_mask
                 if mask_data
                 else self.velocity_data[0, :, :, :, t].copy()
             )
             v = (
-                self.velocity_data[1, :, :, :, t].copy()
-                * self.vel_mask[:, :, :, np.newaxis]
+                self.velocity_data[1, :, :, :, t].copy() * self.vel_mask
                 if mask_data
                 else self.velocity_data[1, :, :, :, t].copy()
             )
             w = (
-                self.velocity_data[2, :, :, :, t].copy()
-                * self.vel_mask[:, :, :, np.newaxis]
+                self.velocity_data[2, :, :, :, t].copy() * self.vel_mask
                 if mask_data
                 else self.velocity_data[2, :, :, :, t].copy()
             )
@@ -240,10 +248,11 @@ def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> N
     """
     for dx in dx_list:
         for dt in dt_list:
-            current_dataset = PressureEstimationDataset("current", dx, dt, "SNRinf")
+            current_dataset = PressureEstimationDataset(dx, dt, "SNRinf", load="vel")
 
             current_dataset.export_velocity_to_vti(
-                f"../../methods_paper_vti/UM13_velocity_input_vti/{dx}mm/{dt}ms/{current_dataset.snr}"
+                f"../../methods_paper_vti/UM13_velocity_input_vti/{dx}mm/{dt}ms/{current_dataset.snr}",
+                mask_data=True,
             )
 
             del current_dataset
