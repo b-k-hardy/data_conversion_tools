@@ -10,7 +10,6 @@ from pathlib import Path
 
 import h5py
 import numpy as np
-from add_noise import add_complex_noise
 from pyevtk.hl import imageToVTK
 from tqdm import tqdm
 
@@ -157,7 +156,6 @@ class PressureEstimationDataset:
         print(f"Exporting velocity field {self.dx} x {self.dt}")
         for t in tqdm(range(n_timesteps)):
 
-            # DINGUS YOU MASKED AND THEN ADDED NOISE...
             u = (
                 self.velocity_data[0, :, :, :, t].copy() * self.vel_mask
                 if mask_data
@@ -173,6 +171,7 @@ class PressureEstimationDataset:
                 if mask_data
                 else self.velocity_data[2, :, :, :, t].copy()
             )
+
             vel = (u, v, w)
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_v_{t:02d}"
             imageToVTK(out_path, spacing=self.vel_dx, cellData={"Velocity": vel})
@@ -251,8 +250,7 @@ def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> N
             current_dataset = PressureEstimationDataset(dx, dt, "SNRinf", load="vel")
 
             current_dataset.export_velocity_to_vti(
-                f"../../methods_paper_vti/UM13_velocity_input_vti/{dx}mm/{dt}ms/{current_dataset.snr}",
-                mask_data=True,
+                f"../../methods_paper_vti/UM13_velocity_input_vti/{dx}mm/{dt}ms/{current_dataset.snr}"
             )
 
             del current_dataset
