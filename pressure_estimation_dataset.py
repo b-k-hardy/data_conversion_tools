@@ -13,8 +13,9 @@ import numpy as np
 from pyevtk.hl import imageToVTK
 from tqdm import tqdm
 
-
 # FIXME: I might want to split this up further? Maybe separate classes that are linked somehow? Not sure...
+
+
 class PressureEstimationDataset:
     """This is a data class that I am using to structure the PPE/STE pressure fields and inputs for the Methods Paper.
     Some assumptions have been made in order to streamline the data loading process, making this code unsuitable
@@ -40,16 +41,16 @@ class PressureEstimationDataset:
             self.velocity_data, self.vel_dx, self.vel_dt = self.load_velocity()
 
         if "ste" in load:
-            self.ste = self.load_pressure("ste", 1)
+            self.ste = self.load_pressure("STE", 1)
 
         if "ste_err" in load:
-            self.ste_err = self.load_error("ste", 1)
+            self.ste_err = self.load_error("STE", 1)
 
         if "ppe" in load:
-            self.ppe = self.load_pressure("ppe", 1)
+            self.ppe = self.load_pressure("PPE", 1)
 
         if "ppe_err" in load:
-            self.ppe_err = self.load_error("ppe", 1)
+            self.ppe_err = self.load_error("PPE", 1)
         # self.inlet = self.load_inlet()
         # self.outlet = self.load_outlet()
 
@@ -237,7 +238,7 @@ class PressureEstimationDataset:
             )
 
         # write pressure field one timestep at a time
-        n_timesteps = pres_dict["pressure"].shape[-1]
+        n_timesteps = int(pres_dict["pressure"].shape[-1])
         for t in tqdm(range(n_timesteps)):
             p = pres_dict["pressure"][:, :, :, t].copy()
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_{t:02d}"
@@ -272,9 +273,9 @@ class PressureEstimationDataset:
             )
 
         # write pressure error field one timestep at a time
-        n_timesteps = err_dict["err"][-1]
+        n_timesteps = int(err_dict["err"].shape[-1])
         for t in tqdm(range(n_timesteps)):
-            p = self.ste_err[:, :, :, t].copy()
+            p = err_dict["err"][:, :, :, t].copy()
             out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_{self.snr}_P_{method.upper()}_ERR_{t:02d}"
             imageToVTK(
                 out_path,
@@ -302,37 +303,29 @@ def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> N
 
 
 def main():
-    # FIXME: EXPORT PPE STUFF NOW
-    """
-    noise_levels = ["SNR10", "SNR30", "SNRinf"]
+    """main method."""
 
-    for snr in noise_levels:
-        data_path_vel = f"UM13_noisey_velocity/UM13_1.5mm_10ms_{snr}_V.mat"
-
-        vel_output_dir = f"UM13_noisey_velocity/1.5mm/10ms/{snr}"
-        vel_output_filename = f"UM13_1.5mm_10ms_{snr}_V"
-
-        mat_v_to_vti(
-            data_path_vel, vel_output_dir, vel_output_filename, mask_data=False
-        )
-    """
-    export_baseline_velocity(dx_list=[1.5], dt_list=[20])
-
-    """
     dx_list = [1.5, 2.0, 3.0]
     dt_list = [60, 40, 20]
+    noise_list = ["SNRinf", "SNR30", "SNR10"]
 
     for dx in dx_list:
         for dt in dt_list:
-            current_dataset = PressureEstimationDataset("current", dx, dt, "SNRinf")
+            for snr in noise_list:
+                current_dataset = PressureEstimationDataset(
+                    dx, dt, snr, load=("ppe", "ppe_err")
+                )
 
-            current_dataset.load_error("STE", 1)
-            current_dataset.export_error_to_vti(
-                f"../../methods_paper_vti/UM13_error_output_vti/{dx}mm/{dt}ms/{current_dataset.snr}/STE",
-                "STE",
-            )
-            del current_dataset  
-    """
+                current_dataset.export_pressure_to_vti(
+                    f"../../methods_paper_vti/UM13_pressure_output_vti/{dx}mm/{dt}ms/{current_dataset.snr}/PPE",
+                    "PPE",
+                )
+                current_dataset.export_error_to_vti(
+                    f"../../methods_paper_vti/UM13_error_output_vti/{dx}mm/{dt}ms/{current_dataset.snr}/STE",
+                    "PPE",
+                )
+
+                del current_dataset
 
     # it would be fun to turn this into a command line tool :)
 
