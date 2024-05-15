@@ -1,8 +1,13 @@
+""" This is a script that analyzes CFD data
+
+    [INSERT LONGER EXPLANATION HERE]
+"""
+
 import h5py
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import numpy as np
+from matplotlib import colormaps
 from scipy import stats
 
 
@@ -18,7 +23,7 @@ def ste_load(data_dir_prefix, dx, dt):
 
     # Load in catheter pressure measurements and sub-select comparison time points
     with h5py.File(cfd_path, "r") as f:
-        p_cfd = f["P"][:].T
+        p_cfd = np.asarray(f["P"]).T
 
     # Load in STE pressure estimates
     with h5py.File(ste_path, "r") as f:
@@ -35,6 +40,31 @@ def ste_load(data_dir_prefix, dx, dt):
     p_cfd = p_cfd[error_mask]
 
     return p_cfd.flatten(), p_ste.flatten()
+
+
+def load_error_mask(mask_path):
+
+    with h5py.File(mask_path, "r") as f:
+        error_mask = np.asarray(f["mask"]).T.astype(bool)
+
+    return error_mask
+
+
+def load_pressure_data(pressure_path, method, mask):
+
+    with h5py.File(pressure_path) as f:
+        p_pointer = f[f"p_{method.upper()}"][:]
+        pressure = np.asarray(f[p_pointer[0, 0]]["im"]).T
+
+    return pressure[mask].flatten()
+
+
+def load_cfd_data(pressure_path, mask):
+
+    with h5py.File(pressure_path) as f:
+        pressure = np.asarray(f["P"]).T
+
+    return pressure[mask].flatten()
 
 
 def ste_load_noisey(data_dir_prefix, dx, dt, snr):
@@ -125,8 +155,8 @@ def hist_plot(p_cfd, estimations, dx, dt, ax):
 
     masked_H = np.ma.array(H, mask=(H == 0))
 
-    cmap = cm.get_cmap("inferno_r").copy()
-    cmap.set_bad("white", -1e-7)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
+    cmap = colormaps["inferno_r"]
+    cmap.set_bad("white", 1e-7)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
 
     # plot
     density = ax.imshow(
@@ -155,47 +185,63 @@ def baseline():
     # Need to make one giant figure and then pass each axes into the plotting function
     # ALSO THERE IS AN INCREDIBLE SHITLOAD OF REDUNDANT CODE HERE -> SPLIT DATA LOADS FOR vWERP and STE into two functions and then make 3rd function for plotting, that way it's the same stuff for ste and vwerp and eventually ppe, unsteady bernoulli
 
-    data_dir_prefix = r"D:/UM13_new_analysis"
-
     spatial = ["1.5mm", "2.0mm", "3.0mm"]
     temporal = ["20ms", "40ms", "60ms"]
+    methods = ["PPE", "STE"]
 
-    fig, axes = plt.subplots(
-        nrows=3,
-        ncols=3,
-        figsize=(13, 12),
-        sharex=True,
-        sharey=True,
-        layout="constrained",
-    )
+    for method in methods:
+        fig, axes = plt.subplots(
+            nrows=3,
+            ncols=3,
+            figsize=(13, 12),
+            sharex=True,
+            sharey=True,
+            layout="constrained",
+        )
 
-    for i, dx in enumerate(spatial):
-        for j, dt in enumerate(temporal):
+        for i, dx in enumerate(spatial):
+            for j, dt in enumerate(temporal):
 
-            # load data and get arrays for regression out
-            p_cfd, p_ste = ste_load(data_dir_prefix, dx, dt)
+                mask = load_error_mask(
+                    f"../../UM13_in_silico_results/{dx}/{dt}/SNRinf/UM13_{dx}_{dt}_SNRinf_{method}_ERR_1.mat"
+                )
 
-            # do plotting and regression
-            hist_plot(p_cfd, p_ste, dx, dt, axes[i, j])
+                pressure = load_pressure_data(
+                    f"../../UM13_in_silico_results/{dx}/{dt}/SNRinf/UM13_{dx}_{dt}_SNRinf_{method}_1.mat",
+                    method,
+                    mask,
+                )
 
-    img = axes[0, 0].get_images()[0]
-    cbar = fig.colorbar(img, ax=axes, format=mtick.PercentFormatter(1.0))
-    cbar.set_label(label="Distribution per Column", fontsize=18)
-    cbar.ax.tick_params(labelsize=16)
+                # load data and get arrays for regression out
+                p_cfd = load_cfd_data(
+                    f"../../UM13_P_CFD/{dx}/UM13_{dx}_{dt}_shifted.mat",
+                    mask,
+                )
 
-    cols = [r"$\Delta \mathregular{P_{CFD}}$ [mmHg]"] * 3
-    rows = [r"$\Delta \mathregular{P_{STE}}$ [mmHg]"] * 3
+                # do plotting and regression
+                hist_plot(p_cfd, pressure, dx, dt, axes[i, j])
 
-    for ax, col in zip(axes[-1], cols):
-        ax.set_xlabel(col, fontsize=16)
+        img = axes[0, 0].get_images()[0]
+        cbar = fig.colorbar(img, ax=axes, format=mtick.PercentFormatter(1.0))
+        cbar.set_label(label="Distribution per Column", fontsize=18)
+        cbar.ax.tick_params(labelsize=16)
 
-    for ax, row in zip(axes[:, 0], rows):
-        ax.set_ylabel(row, fontsize=16)
+        cols = [r"$\Delta \mathregular{P_{CFD}}$ [mmHg]"] * 3
+        rows = [r"$\Delta \mathregular{P_{STE}}$ [mmHg]"] * 3
 
-    # save big figure
-    fig.savefig(f"UM13_inf_correlation_NEW.svg")
-    fig.savefig(f"UM13_inf_correlation_NEW.pdf")
-    fig.savefig(f"UM13_inf_correlation_NEW.png", dpi=400)
+        for ax, col in zip(axes[-1], cols):
+            ax.set_xlabel(col, fontsize=16)
+
+        for ax, row in zip(axes[:, 0], rows):
+            ax.set_ylabel(row, fontsize=16)
+
+        # save big figure
+        fig.savefig(
+            f"../../UM13_in_silico_results/correlation_plots/UM13_{method}_inf_correlation.svg"
+        )
+        fig.savefig(
+            f"../../UM13_in_silico_results/correlation_plots/UM13_{method}_inf_correlation.pdf"
+        )
 
     # plt.show()
 

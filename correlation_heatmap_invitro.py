@@ -1,9 +1,8 @@
 import h5py
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import numpy as np
-import numpy.ma as ma
+from matplotlib import colormaps
 from scipy import stats
 
 
@@ -129,18 +128,7 @@ def ste_load(data_dir_prefix):
     return cath_measurements, ste_estimations
 
 
-def hist_plot(
-    cath_measurements, estimations, method, plot_type="hist2d", exclude=False
-):
-
-    if exclude:
-        line_color = "black"  # NOTE I screwed around with this stuff earlier so idk my plotting software has kinda gone haywire but at least I'm producing something cool...
-        text_color = "black"
-        min_count = 1
-    else:
-        line_color = "white"
-        text_color = "white"
-        min_count = 0
+def hist_plot(cath_measurements, estimations, method):
 
     # Regression Stuff
     reg = stats.linregress(cath_measurements, estimations)
@@ -166,67 +154,36 @@ def hist_plot(
         verticalalignment="top",
         transform=ax.transAxes,
         fontsize=20,
-        color=text_color,
+        color="black",
     )
-    ax.plot(x, reg.intercept + reg.slope * x, color=line_color, linewidth="3")
-    ax.plot(x, x, color=line_color, linestyle="--", linewidth=3)
+    ax.plot(x, reg.intercept + reg.slope * x, color="black", linewidth="3")
+    ax.plot(x, x, color="black", linestyle="--", linewidth=3)
 
-    # Plotting parameters that depend on plot type
-    if plot_type == "hexbin":
-        density = ax.hexbin(
-            cath_measurements,
-            estimations,
-            gridsize=50,
-            extent=x.tolist() + x.tolist(),
-            mincnt=min_count,
-            vmax=10,
-            cmap="inferno",
-        )
-        cbar = fig.colorbar(density, ax=ax)
+    # math shit
+    H, xedges, yedges = np.histogram2d(
+        cath_measurements, estimations, bins=26, range=[x, x]
+    )  # at some point, will probably want to double-check to make sure I'm doing this stuff correctly
 
-    elif plot_type == "hist2d":
-        density = ax.hist2d(
-            cath_measurements,
-            estimations,
-            bins=26,
-            range=[x, x],
-            cmin=min_count,
-            vmax=25,
-            cmap="inferno",
-        )
-        cbar = fig.colorbar(density[3], ax=ax)
+    # find the normalization factor for each column (axis=1 bc H is transposed)
+    H_norm = np.maximum(1, np.sum(H, axis=1))
+    H = H / H_norm[:, None]
 
-    elif plot_type == "hist2d_normalized":
+    masked_H = np.ma.array(H, mask=(H == 0))
 
-        # math shit
-        H, xedges, yedges = np.histogram2d(
-            cath_measurements, estimations, bins=26, range=[x, x]
-        )  # at some point, will probably want to double-check to make sure I'm doing this stuff correctly
+    cmap = colormaps["inferno_r"]
+    cmap.set_bad("white", 1e-7)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
 
-        # find the normalization factor for each column (axis=1 bc H is transposed)
-        H_norm = np.maximum(1, np.sum(H, axis=1))
-        H = H / H_norm[:, None]
-
-        masked_H = np.ma.array(H, mask=(H == 0))
-
-        cmap = cm.inferno_r
-        cmap.set_bad("white", -1e-7)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
-
-        # plot
-        density = ax.imshow(
-            masked_H.T,
-            interpolation="nearest",
-            origin="lower",
-            extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
-            vmax=1.0,
-            cmap=cmap,
-        )
-        cbar = fig.colorbar(density, ax=ax, format=mtick.PercentFormatter(1.0))
-        cbar.set_label(label="Distribution per Column", fontsize=18)
-
-    else:
-        print("Undefined plot type!")
-        return
+    # plot
+    density = ax.imshow(
+        masked_H.T,
+        interpolation="nearest",
+        origin="lower",
+        extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+        vmax=1.0,
+        cmap=cmap,
+    )
+    cbar = fig.colorbar(density, ax=ax, format=mtick.PercentFormatter(1.0))
+    cbar.set_label(label="Distribution per Column", fontsize=18)
 
     # Plot formatting
     ax.set_aspect("equal")
@@ -274,14 +231,10 @@ def main():
     )
 
     # save figures
-    vwerp_fig.savefig("vwerp_correlation.eps")
-    ste_fig.savefig("ste_correlation.eps")
     vwerp_fig.savefig("vwerp_correlation.svg")
     ste_fig.savefig("ste_correlation.svg")
     vwerp_fig.savefig("vwerp_correlation.pdf")
     ste_fig.savefig("ste_correlation.pdf")
-    vwerp_fig.savefig("vwerp_correlation.png", dpi=400)
-    ste_fig.savefig("ste_correlation.png", dpi=400)
 
     plt.show()
 
