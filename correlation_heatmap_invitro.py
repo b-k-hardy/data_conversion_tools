@@ -1,4 +1,10 @@
+""" _summary_
+
+    [INSERT LONGER HERE]
+"""
+
 import h5py
+import matlab.engine
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import numpy as np
@@ -6,25 +12,17 @@ from matplotlib import colormaps
 from scipy import stats
 
 
-# assemble pressure measurement points and catheter points between all models into ONE heatmap correlation plot
-def vwerp_load(data_dir_prefix):
+def cath_load(data_dir_prefix):
 
     cath_measurements = []
-    vwerp_estimations = []
 
-    models = ["TBAD", "TBAD_ENT", "TBAD_EXT"]
+    models = ["TBAD_OR", "TBAD_ENT", "TBAD_EXT"]
 
     for model in models:
-
         cath_path = f"{data_dir_prefix}/{model}/{model}_shifted_dP_array.mat"
-        vwerp_path = f"{data_dir_prefix}/{model}/{model}_vWERP_dP_array.mat"
 
         # Load in catheter pressure measurements and sub-select comparison time points
         with h5py.File(cath_path, "r") as f:
-
-            cath_time = f["cath_time"][:].flatten()[
-                30:400:20
-            ]  # unused, but might as well keep just in case
 
             # false lumen dp - PAY ATTENTION TO ORDER SO COMPARISONS ARE PAIRED CORRECTLY
             cath_measurements += f["f1_dp"][:].flatten()[30:400:20].tolist()
@@ -42,97 +40,136 @@ def vwerp_load(data_dir_prefix):
             cath_measurements += f["t5_dp"][:].flatten()[30:400:20].tolist()
             cath_measurements += f["o_dp"][:].flatten()[30:400:20].tolist()
 
-        # Load in vWERP pressure estimates
-        with h5py.File(vwerp_path, "r") as f:
-            # NOTE: currently including both of the outlet measurements. Wonder if it would be more "correct" to include both but weight them by half?
+    cath_measurements = np.asarray(cath_measurements)
 
-            # false lumen dp
-            vwerp_estimations += f["f1_dp"][:].flatten().tolist()
-            vwerp_estimations += f["f2_dp"][:].flatten().tolist()
-            vwerp_estimations += f["f3_dp"][:].flatten().tolist()
-            vwerp_estimations += f["f4_dp"][:].flatten().tolist()
-            vwerp_estimations += f["f5_dp"][:].flatten().tolist()
-            vwerp_estimations += f["of_dp"][:].flatten().tolist()
+    return cath_measurements
 
-            # true lumen dp
-            vwerp_estimations += f["t1_dp"][:].flatten().tolist()
-            vwerp_estimations += f["t2_dp"][:].flatten().tolist()
-            vwerp_estimations += f["t3_dp"][:].flatten().tolist()
-            vwerp_estimations += f["t4_dp"][:].flatten().tolist()
-            vwerp_estimations += f["t5_dp"][:].flatten().tolist()
-            vwerp_estimations += f["ot_dp"][:].flatten().tolist()
+
+# assemble pressure measurement points and catheter points between all models into ONE heatmap correlation plot
+def vwerp_load(data_dir_prefix):
+
+    keys = [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "Outlet_FL",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "Outlet_TL",
+    ]
+
+    eng = matlab.engine.start_matlab()
+
+    vwerp_estimations = []
+
+    models = ["TBAD_OR", "TBAD_ENT", "TBAD_EXT"]
+    shit_list = ["BL", "BL_ENT", "BL_EXT"]
+
+    for i, model in enumerate(models):
+        vwerp_path = f"{data_dir_prefix}/{model}/vWERP_{shit_list[i]}_SNRinf.mat"
+
+        for key in keys:
+            vwerp_estimations += (
+                np.asarray(eng.unpack_dictionary(vwerp_path, key, "vWERP"))
+                .flatten()
+                .tolist()
+            )  # not sure how this indentation scheme is legal but okay
 
     # convert measurements to numpy array for faster regression and plotting
-    cath_measurements = np.asarray(cath_measurements)
     vwerp_estimations = np.asarray(vwerp_estimations)
 
-    return cath_measurements, vwerp_estimations
+    return vwerp_estimations
+
+
+def ppe_load(data_dir_prefix):
+
+    keys = [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "Outlet",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "Outlet",
+    ]
+
+    eng = matlab.engine.start_matlab()
+
+    ppe_estimations = []
+
+    models = ["TBAD_OR", "TBAD_ENT", "TBAD_EXT"]
+    shit_list = ["BL", "BL_ENT", "BL_EXT"]
+
+    for i, model in enumerate(models):
+        ppe_path = f"{data_dir_prefix}/{model}/PPE_{shit_list[i]}_SNRinf_dP.mat"
+
+        for key in keys:
+            ppe_estimations += (
+                np.asarray(eng.unpack_dictionary(ppe_path, key, "PPE"))
+                .flatten()
+                .tolist()
+            )  # not sure how this indentation scheme is legal but okay
+
+    # convert measurements to numpy array for faster regression and plotting
+    ppe_estimations = np.asarray(ppe_estimations)
+
+    return ppe_estimations
 
 
 def ste_load(data_dir_prefix):
 
-    cath_measurements = []
+    keys = [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "Outlet",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "Outlet",
+    ]
+
+    eng = matlab.engine.start_matlab()
+
     ste_estimations = []
 
-    models = ["TBAD", "TBAD_ENT", "TBAD_EXT"]
+    models = ["TBAD_OR", "TBAD_ENT", "TBAD_EXT"]
+    shit_list = ["BL", "BL_ENT", "BL_EXT"]
 
-    for model in models:
+    for i, model in enumerate(models):
+        ste_path = f"{data_dir_prefix}/{model}/STE_{shit_list[i]}_SNRinf_dP.mat"
 
-        cath_path = f"{data_dir_prefix}/{model}/{model}_shifted_dP_array.mat"
-        vwerp_path = f"{data_dir_prefix}/{model}/{model}_STE_dP_array.mat"
-
-        # Load in catheter pressure measurements and sub-select comparison time points
-        with h5py.File(cath_path, "r") as f:
-
-            cath_time = f["cath_time"][:].flatten()[
-                30:400:20
-            ]  # unused, but might as well keep just in case
-
-            # false lumen dp - PAY ATTENTION TO ORDER SO COMPARISONS ARE PAIRED CORRECTLY
-            cath_measurements += f["f1_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f2_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f3_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f4_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f5_dp"][:].flatten()[30:400:20].tolist()
-
-            # true lumen dp - Note the doubling up of the inlet-outlet dP
-            cath_measurements += f["t1_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t2_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t3_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t4_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t5_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["o_dp"][:].flatten()[30:400:20].tolist()
-
-        # Load in STE pressure estimates
-        with h5py.File(vwerp_path, "r") as f:
-
-            # false lumen dp
-            ste_estimations += f["f1_dp"][:].flatten().tolist()
-            ste_estimations += f["f2_dp"][:].flatten().tolist()
-            ste_estimations += f["f3_dp"][:].flatten().tolist()
-            ste_estimations += f["f4_dp"][:].flatten().tolist()
-            ste_estimations += f["f5_dp"][:].flatten().tolist()
-
-            # true lumen dp
-            ste_estimations += f["t1_dp"][:].flatten().tolist()
-            ste_estimations += f["t2_dp"][:].flatten().tolist()
-            ste_estimations += f["t3_dp"][:].flatten().tolist()
-            ste_estimations += f["t4_dp"][:].flatten().tolist()
-            ste_estimations += f["t5_dp"][:].flatten().tolist()
-            ste_estimations += f["o_dp"][:].flatten().tolist()
+        for key in keys:
+            ste_estimations += (
+                np.asarray(eng.unpack_dictionary(ste_path, key, "STE"))
+                .flatten()
+                .tolist()
+            )  # not sure how this indentation scheme is legal but okay
 
     # convert measurements to numpy array for faster regression and plotting
-    cath_measurements = np.asarray(cath_measurements)
     ste_estimations = np.asarray(ste_estimations)
 
-    return cath_measurements, ste_estimations
+    return ste_estimations
 
 
 def hist_plot(cath_measurements, estimations, method):
 
     # Regression Stuff
     reg = stats.linregress(cath_measurements, estimations)
-    # x = np.array([np.min(cath_measurements), np.max(cath_measurements)])
     x = np.array([-6.0, 20.0])
 
     if reg.intercept < 0.0:
@@ -171,7 +208,7 @@ def hist_plot(cath_measurements, estimations, method):
     masked_H = np.ma.array(H, mask=(H == 0))
 
     cmap = colormaps["inferno_r"]
-    cmap.set_bad("white", 1e-7)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
+    cmap.set_bad("white", 0)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
 
     # plot
     density = ax.imshow(
@@ -189,7 +226,7 @@ def hist_plot(cath_measurements, estimations, method):
     ax.set_aspect("equal")
     ax.set_ylim(bottom=x[0], top=x[1])
     ax.set_xlim(left=x[0], right=x[1])
-    ax.set_title(f"{method} Flow Phantom Correlation Plot", fontsize=22)
+    ax.set_title(f"{method} SNRinf All In Vitro Models Correlation Plot", fontsize=22)
     ax.set_xlabel(r"$\Delta \mathregular{P_{cath}}$ [mmHg]", fontsize=22)
     ax.set_ylabel(
         rf"$\Delta \mathregular{{P_{{{method}}}}}$ [mmHg]", fontsize=22
@@ -206,35 +243,31 @@ def hist_plot(cath_measurements, estimations, method):
 def main():
     # FIXME: the distributions look oddly similar? Might want to double-check my manual data creation process... CATH is definitely being re-used, but estimations should NOT BE... bit odd...
     # NOTE: MIGHT just want to continue doing regular correlation plots for plane-to-plane data, but definitely use this heatmap idea for the fully-spatial correlation plots?
-    # ALSO THERE IS AN INCREDIBLE SHITLOAD OF REDUNDANT CODE HERE -> SPLIT DATA LOADS FOR vWERP and STE into two functions and then make 3rd function for plotting, that way it's the same stuff for ste and vwerp and eventually ppe, unsteady bernoulli
+    # ALSO THERE IS AN INCREDIBLE SHITLOAD OF REDUNDANT CODE HERE -> SPLIT DATA LOADS FOR vWERP and STE into two functions and then make 3rd function for plotting,
+    # that way it's the same stuff for ste and vwerp and eventually ppe, unsteady bernoulli
 
-    data_dir_prefix = "../../../../../Relative Pressure Estimation/vwerp/judith"
-
-    # might make sense to do additional cath_data load function if I start using the same catheter array for both STE and vWERP (i.e. don't double-up on vWERP measurements)
-
-    # maybe want to add option for standard scatter plot as well...
+    data_dir_prefix = "../../antonjr_results"
 
     # load data and package into correct arrays
-    cath_vwerp, vwerp_estimates = vwerp_load(data_dir_prefix)
-    cath_ste, ste_estimates = ste_load(data_dir_prefix)
+    cath_data = cath_load(data_dir_prefix)
+    vwerp_estimates = vwerp_load(data_dir_prefix)
+    ste_estimates = ste_load(data_dir_prefix)
+    ppe_estimates = ppe_load(data_dir_prefix)
 
     # make plots
-    vwerp_fig = hist_plot(
-        cath_vwerp,
-        vwerp_estimates,
-        "vWERP",
-        plot_type="hist2d_normalized",
-        exclude=True,
-    )  # FIXME: having a lot of trouble getting the "v" to italicize properly...
-    ste_fig = hist_plot(
-        cath_ste, ste_estimates, "STE", plot_type="hist2d_normalized", exclude=True
-    )
+    vwerp_fig = hist_plot(cath_data, vwerp_estimates, "vWERP")
+    # FIXME: having a lot of trouble getting the "v" to italicize properly...
+    ste_fig = hist_plot(cath_data, ste_estimates, "STE")
+    ppe_fig = hist_plot(cath_data, ppe_estimates, "PPE")
 
     # save figures
-    vwerp_fig.savefig("vwerp_correlation.svg")
-    ste_fig.savefig("ste_correlation.svg")
-    vwerp_fig.savefig("vwerp_correlation.pdf")
-    ste_fig.savefig("ste_correlation.pdf")
+    vwerp_fig.savefig(f"{data_dir_prefix}/vwerp_correlation.svg")
+    ste_fig.savefig(f"{data_dir_prefix}/ste_correlation.svg")
+    ppe_fig.savefig(f"{data_dir_prefix}/ppe_correlation.svg")
+
+    vwerp_fig.savefig(f"{data_dir_prefix}/vwerp_correlation.pdf")
+    ste_fig.savefig(f"{data_dir_prefix}/ste_correlation.pdf")
+    ppe_fig.savefig(f"{data_dir_prefix}/ppe_correlation.pdf")
 
     plt.show()
 
