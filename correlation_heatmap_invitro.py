@@ -85,45 +85,7 @@ def vwerp_load(data_dir_prefix, eng):
     return vwerp_estimations
 
 
-def ppe_load(data_dir_prefix, eng):
-
-    keys = [
-        "F1",
-        "F2",
-        "F3",
-        "F4",
-        "F5",
-        "Outlet",
-        "T1",
-        "T2",
-        "T3",
-        "T4",
-        "T5",
-        "Outlet",
-    ]
-
-    ppe_estimations = []
-
-    models = ["TBAD_OR", "TBAD_ENT", "TBAD_EXT"]
-    shit_list = ["BL", "BL_ENT", "BL_EXT"]
-
-    for i, model in enumerate(models):
-        ppe_path = f"{data_dir_prefix}/{model}/PPE_{shit_list[i]}_SNRinf_dP.mat"
-
-        for key in keys:
-            ppe_estimations += (
-                np.asarray(eng.unpack_dictionary(ppe_path, key, "PPE"))
-                .flatten()
-                .tolist()
-            )  # not sure how this indentation scheme is legal but okay
-
-    # convert measurements to numpy array for faster regression and plotting
-    ppe_estimations = np.asarray(ppe_estimations)
-
-    return ppe_estimations
-
-
-def ste_load(data_dir_prefix, eng):
+def single_map_load(data_dir_prefix, method: str, eng):
 
     keys = [
         "F1",
@@ -146,11 +108,13 @@ def ste_load(data_dir_prefix, eng):
     shit_list = ["BL", "BL_ENT", "BL_EXT"]
 
     for i, model in enumerate(models):
-        ste_path = f"{data_dir_prefix}/{model}/STE_{shit_list[i]}_SNRinf_dP.mat"
+        pressure_path = (
+            f"{data_dir_prefix}/{model}/{method}_{shit_list[i]}_SNRinf_dP.mat"
+        )
 
         for key in keys:
             ste_estimations += (
-                np.asarray(eng.unpack_dictionary(ste_path, key, "STE"))
+                np.asarray(eng.unpack_dictionary(pressure_path, key, method))
                 .flatten()
                 .tolist()
             )  # not sure how this indentation scheme is legal but okay
@@ -250,8 +214,10 @@ def main():
     # load data and package into correct arrays
     cath_data = cath_load(data_dir_prefix)
     vwerp_estimates = vwerp_load(data_dir_prefix, eng)
-    ste_estimates = ste_load(data_dir_prefix, eng)
-    ppe_estimates = ppe_load(data_dir_prefix, eng)
+    # ste_estimates = ste_load(data_dir_prefix, eng)
+    ste_estimates = single_map_load(data_dir_prefix, "STE", eng)
+    ppe_estimates = single_map_load(data_dir_prefix, "PPE", eng)
+    # ppe_estimates = ppe_load(data_dir_prefix, eng)
     load_time = time.time() - start_time
     print(f"Data loaded in {load_time:.2f} seconds")
 
