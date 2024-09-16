@@ -3,6 +3,7 @@
     [INSERT LONGER HERE]
 """
 
+import time
 import h5py
 import matlab.engine
 import matplotlib.pyplot as plt
@@ -25,20 +26,20 @@ def cath_load(data_dir_prefix):
         with h5py.File(cath_path, "r") as f:
 
             # false lumen dp - PAY ATTENTION TO ORDER SO COMPARISONS ARE PAIRED CORRECTLY
-            cath_measurements += f["f1_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f2_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f3_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f4_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["f5_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["o_dp"][:].flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["f1_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["f2_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["f3_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["f4_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["f5_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["o_dp"]).flatten()[30:400:20].tolist()
 
             # true lumen dp - Note the doubling up of the inlet-outlet dP
-            cath_measurements += f["t1_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t2_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t3_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t4_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["t5_dp"][:].flatten()[30:400:20].tolist()
-            cath_measurements += f["o_dp"][:].flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["t1_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["t2_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["t3_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["t4_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["t5_dp"]).flatten()[30:400:20].tolist()
+            cath_measurements += np.asarray(f["o_dp"]).flatten()[30:400:20].tolist()
 
     cath_measurements = np.asarray(cath_measurements)
 
@@ -46,7 +47,7 @@ def cath_load(data_dir_prefix):
 
 
 # assemble pressure measurement points and catheter points between all models into ONE heatmap correlation plot
-def vwerp_load(data_dir_prefix):
+def vwerp_load(data_dir_prefix, eng):
 
     keys = [
         "F1",
@@ -62,8 +63,6 @@ def vwerp_load(data_dir_prefix):
         "T5",
         "Outlet_TL",
     ]
-
-    eng = matlab.engine.start_matlab()
 
     vwerp_estimations = []
 
@@ -86,7 +85,7 @@ def vwerp_load(data_dir_prefix):
     return vwerp_estimations
 
 
-def ppe_load(data_dir_prefix):
+def ppe_load(data_dir_prefix, eng):
 
     keys = [
         "F1",
@@ -102,8 +101,6 @@ def ppe_load(data_dir_prefix):
         "T5",
         "Outlet",
     ]
-
-    eng = matlab.engine.start_matlab()
 
     ppe_estimations = []
 
@@ -126,7 +123,7 @@ def ppe_load(data_dir_prefix):
     return ppe_estimations
 
 
-def ste_load(data_dir_prefix):
+def ste_load(data_dir_prefix, eng):
 
     keys = [
         "F1",
@@ -142,8 +139,6 @@ def ste_load(data_dir_prefix):
         "T5",
         "Outlet",
     ]
-
-    eng = matlab.engine.start_matlab()
 
     ste_estimations = []
 
@@ -246,28 +241,40 @@ def main():
     # ALSO THERE IS AN INCREDIBLE SHITLOAD OF REDUNDANT CODE HERE -> SPLIT DATA LOADS FOR vWERP and STE into two functions and then make 3rd function for plotting,
     # that way it's the same stuff for ste and vwerp and eventually ppe, unsteady bernoulli
 
-    data_dir_prefix = "../../antonjr_results"
+    eng = matlab.engine.start_matlab()
 
+    start_time = time.time()
+    data_dir_prefix = "../../in_vitro_results"
+
+    print("Loading data...")
     # load data and package into correct arrays
     cath_data = cath_load(data_dir_prefix)
-    vwerp_estimates = vwerp_load(data_dir_prefix)
-    ste_estimates = ste_load(data_dir_prefix)
-    ppe_estimates = ppe_load(data_dir_prefix)
+    vwerp_estimates = vwerp_load(data_dir_prefix, eng)
+    ste_estimates = ste_load(data_dir_prefix, eng)
+    ppe_estimates = ppe_load(data_dir_prefix, eng)
+    load_time = time.time() - start_time
+    print(f"Data loaded in {load_time:.2f} seconds")
 
+    start_time = time.time()
+    print("Making plots...")
     # make plots
-    vwerp_fig = hist_plot(cath_data, vwerp_estimates, "vWERP")
-    # FIXME: having a lot of trouble getting the "v" to italicize properly...
+    vwerp_fig = hist_plot(
+        cath_data, vwerp_estimates, "vWERP"
+    )  # FIXME: having a lot of trouble getting the "v" to italicize properly...
     ste_fig = hist_plot(cath_data, ste_estimates, "STE")
     ppe_fig = hist_plot(cath_data, ppe_estimates, "PPE")
+    plot_time = time.time() - start_time
+    print(f"Plots made in {plot_time:.2f} seconds")
 
+    print("Saving plots...")
     # save figures
-    vwerp_fig.savefig(f"{data_dir_prefix}/vwerp_correlation.svg")
-    ste_fig.savefig(f"{data_dir_prefix}/ste_correlation.svg")
-    ppe_fig.savefig(f"{data_dir_prefix}/ppe_correlation.svg")
+    vwerp_fig.savefig(f"{data_dir_prefix}/correlation_plots/vwerp_correlation.svg")
+    ste_fig.savefig(f"{data_dir_prefix}/correlation_plots/ste_correlation.svg")
+    ppe_fig.savefig(f"{data_dir_prefix}/correlation_plots/ppe_correlation.svg")
 
-    vwerp_fig.savefig(f"{data_dir_prefix}/vwerp_correlation.pdf")
-    ste_fig.savefig(f"{data_dir_prefix}/ste_correlation.pdf")
-    ppe_fig.savefig(f"{data_dir_prefix}/ppe_correlation.pdf")
+    vwerp_fig.savefig(f"{data_dir_prefix}/correlation_plots/vwerp_correlation.pdf")
+    ste_fig.savefig(f"{data_dir_prefix}/correlation_plots/ste_correlation.pdf")
+    ppe_fig.savefig(f"{data_dir_prefix}/correlation_plots/ppe_correlation.pdf")
 
     plt.show()
 
