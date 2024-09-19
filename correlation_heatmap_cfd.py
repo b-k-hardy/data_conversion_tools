@@ -36,46 +36,16 @@ def load_cfd_data(pressure_path, mask):
     return pressure[mask].flatten()
 
 
-def ste_load_noisey(data_dir_prefix, dx, dt, snr, n_realizations):
+def weighted_least_squares(X, Y, H):
+    # doing my very own weighted least-squares with closed form solution...
+    W = np.diag(H.flatten())
+    B = np.linalg.inv(X.T @ W @ X) @ (X.T @ W @ Y)
+    B = B.flatten()
 
-    # decide on paths based on the dt and dx combination...
-    # NOTE: DID THIS LATE AT NIGHT WHILE I WAS TIRED AS FUCK... GONNA WANT TO DOUBLE CHECK EVERYTHING!!!
-
-    cfd_path = f"{data_dir_prefix}/UM13_P_CFD/{dx}/UM13_{dx}_{dt}_shifted.mat"
-    error_path = f"{data_dir_prefix}/error_masks/UM13_{dx}_error_mask_full.mat"
-
-    # Load in cfd pressure solution
-    with h5py.File(cfd_path, "r") as f:
-        p_cfd = f["P"][:].T
-
-    # need to load in error mask as well
-    with h5py.File(error_path, "r") as f:
-        error_mask = f["mask"][:].T.astype(bool)
-
-    p_cfd = p_cfd[error_mask].flatten()
-
-    ste_arr = np.empty(shape=0)
-    for i in range(n_realizations):
-        ste_path = (
-            f"D:/UM13_in_silico_results/{dx}/{dt}/{snr}/UM13_{dx}_{dt}_{snr}_{i+1}.mat"
-        )
-        # Load in STE pressure estimates
-        with h5py.File(ste_path, "r") as f:
-
-            # first, get pointers for pressure struct
-            p_pointers = f["p_STE"]
-
-            p_ste = f[p_pointers[0, 0]]["im"][:].T
-
-            p_ste = p_ste[error_mask].flatten()
-            ste_arr = np.concatenate((ste_arr, p_ste))
-
-    cfd_arr = np.tile(p_cfd, n_realizations)
-
-    return cfd_arr, ste_arr
+    return B
 
 
-def hist_plot_noise(p_cfd, estimations, dx, dt, ax):
+def histogram_discrete(p_cfd, estimations, dx, dt, ax):
     # this is very much a work in progress... for now, just try out the math with the baseline cases. Once it appears to work, go ahead and try with ENTIRE dataset...
 
     # masking... will mask AFTER using the density array. need to flatten and then diagonalize for my weighted least-squares first.
@@ -98,15 +68,7 @@ def hist_plot_noise(p_cfd, estimations, dx, dt, ax):
         p_cfd, estimations, bins=bin_count, range=[xr, xr]
     )  # at some point, will probably want to double-check to make sure I'm doing this stuff correctly
 
-    # construct our weight matrix
-    W = np.diag(H.flatten())
-
-    # need to figure out X and Y... also remember I need to add a "1" function to one of the columns of X. (0th column I'm pretty sure)
-    # just try out a meshgrid for now and then see what happens...
-
-    # doing my very own weighted least-squares with closed form solution...
-    B = np.linalg.inv(X.T @ W @ X) @ (X.T @ W @ Y)
-    B = B.flatten()
+    B = weighted_least_squares(X, Y, H)
 
     # find the normalization factor for each column (axis=1 bc H is transposed)
     H_norm = np.maximum(1, np.sum(H, axis=1))
@@ -114,12 +76,10 @@ def hist_plot_noise(p_cfd, estimations, dx, dt, ax):
 
     masked_H = np.ma.array(H, mask=(H == 0))
 
-    # cmap = cm.get_cmap("inferno_r").copy()
-    cmap = mpl.colormaps["inferno_r"].copy()
-    cmap.set_bad("white", 1e-7)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
+    cmap = colormaps["inferno_r"]
+    cmap.set_bad("white", 0)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
 
-    # Regression Stuff
-
+    # Regression conditional formatting
     if B[0] < 0.0:
         reg_stats = f"$y = {B[1]:.3f}x {B[0]:.3f}$"  # \n$r^2 = {reg.rvalue**2:.3f}$'
     else:
@@ -162,13 +122,13 @@ def hist_plot_noise(p_cfd, estimations, dx, dt, ax):
     print(f"Plot {dx} x {dt} Completed")
 
 
-def hist_plot(p_cfd, estimations, dx, dt, ax):
+def histogram(p_cfd, estimations, dx, dt, ax):
 
-    # Regression Stuff
+    # Linear regression across all points
     reg = stats.linregress(p_cfd, estimations)
-    # x = np.array([np.min(p_cfd), np.max(p_cfd)])
-    x = np.array([-10.0, 20.0])
+    x = np.array([-10.0, 20.0])  # hard coded limits that I know look good
 
+    # Conditional formatting for regression line equation
     if reg.intercept < 0.0:
         reg_stats = (
             f"$y = {reg.slope:.3f}x {reg.intercept:.3f}$\n$r^2 = {reg.rvalue**2:.3f}$"
@@ -178,7 +138,7 @@ def hist_plot(p_cfd, estimations, dx, dt, ax):
             f"$y = {reg.slope:.3f}x + {reg.intercept:.3f}$\n$r^2 = {reg.rvalue**2:.3f}$"
         )
 
-    # Plotting
+    # Plotting regression line, 1:1 line, and regression line equation
     ax.text(
         0.05,
         0.95,
@@ -192,21 +152,21 @@ def hist_plot(p_cfd, estimations, dx, dt, ax):
     ax.plot(x, reg.intercept + reg.slope * x, color="black", linewidth="3")
     ax.plot(x, x, color="black", linestyle="--", linewidth=3)
 
-    # math shit
-    H, xedges, yedges = np.histogram2d(
-        p_cfd, estimations, bins=30, range=[x, x]
-    )  # at some point, will probably want to double-check to make sure I'm doing this stuff correctly
+    # Manually create 2D histogram via numpy
+    H, xedges, yedges = np.histogram2d(p_cfd, estimations, bins=30, range=[x, x])
 
     # find the normalization factor for each column (axis=1 bc H is transposed)
+    # this is what gives the percentage of each column
     H_norm = np.maximum(1, np.sum(H, axis=1))
     H = H / H_norm[:, None]
 
+    # exclude empty bins
     masked_H = np.ma.array(H, mask=(H == 0))
 
     cmap = colormaps["inferno_r"]
-    cmap.set_bad("white", 0)  # FIXME: I want 0 to show up on colorbar??? hmmmmm
+    cmap.set_bad("white", 0)  # FIXME: Do I want 0 to show up on colorbar???
 
-    # plot
+    # plot the heatmap
     density = ax.imshow(
         masked_H.T,
         interpolation="nearest",
@@ -226,7 +186,68 @@ def hist_plot(p_cfd, estimations, dx, dt, ax):
     # ax.legend()
     # ax.tick_params(axis='both', which='minor', labelsize=12)
 
+    # progress update
     print(f"Plot {dx} x {dt} Completed")
+
+
+def multi_correlation_plot(cath_measurements, estimations: dict):
+
+    # TODO: make this a copy of the normal correlation plot, but with a loop that goes through all the methods and draws a line for each one
+    # note that there will be no blocky heatmap, just a few overlayed scatter plots with lines
+
+    # Regression Stuff
+    color_list = ["red", "blue", "green"]
+    text_position = [0.75, 0.85, 0.95]
+    x = np.array([-6.0, 20.0])
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    for method_name, pressure in estimations.items():
+
+        reg = stats.linregress(cath_measurements, pressure)
+
+        if reg.intercept < 0.0:
+            reg_stats = f"$y = {reg.slope:.3f}x {reg.intercept:.3f}$\n$r^2 = {reg.rvalue**2:.3f}$"
+        else:
+            reg_stats = f"$y = {reg.slope:.3f}x + {reg.intercept:.3f}$\n$r^2 = {reg.rvalue**2:.3f}$"
+
+        color = color_list.pop()
+
+        ax.text(
+            0.05,
+            text_position.pop(),
+            reg_stats,
+            horizontalalignment="left",
+            verticalalignment="top",
+            transform=ax.transAxes,
+            fontsize=20,
+            color=color,
+        )
+        ax.plot(
+            x,
+            reg.intercept + reg.slope * x,
+            color=color,
+            linewidth="3",
+            label=method_name,
+        )
+        ax.scatter(cath_measurements, pressure, color=color)
+
+    ax.plot(x, x, color="black", linestyle="--", linewidth=3)
+
+    # Plot formatting
+    ax.set_aspect("equal")
+    ax.set_ylim(bottom=x[0], top=x[1])
+    ax.set_xlim(left=x[0], right=x[1])
+    ax.set_title("SNRinf 1.5mm x 40ms Correlation Plot", fontsize=22)
+    ax.set_xlabel(r"$\Delta \mathregular{P_{CFD}}$ [mmHg]", fontsize=22)
+    ax.set_ylabel(
+        r"$\Delta \mathregular{P_{est}}$ [mmHg]", fontsize=22
+    )  # honestly do not know how this is working but I'm glad it is... raw f-strings wow
+    ax.tick_params(axis="both", which="major", labelsize=16)
+    ax.legend(fontsize=22)
+    # ax.tick_params(axis='both', which='minor', labelsize=12)
+    fig.tight_layout()
+
+    return fig
 
 
 def baseline():
@@ -267,7 +288,7 @@ def baseline():
                 )
 
                 # do plotting and regression
-                hist_plot(p_cfd, pressure, dx, dt, axes[i, j])
+                histogram(p_cfd, pressure, dx, dt, axes[i, j])
 
         img = axes[0, 0].get_images()[0]
         cbar = fig.colorbar(img, ax=axes, format=mtick.PercentFormatter(1.0))
@@ -291,100 +312,83 @@ def baseline():
             f"../../UM13_in_silico_results/correlation_plots/UM13_{method}_inf_correlation.pdf"
         )
 
-    # plt.show()
 
-
-def snr10():
-
-    data_dir_prefix = r"D:/UM13_new_analysis"
+def noise(snr, n_realizations):
 
     spatial = ["1.5mm", "2.0mm", "3.0mm"]
     temporal = ["20ms", "40ms", "60ms"]
+    methods = ["PPE", "STE"]
 
-    fig, axes = plt.subplots(
-        nrows=3,
-        ncols=3,
-        figsize=(13, 12),
-        sharex=True,
-        sharey=True,
-        layout="constrained",
-    )
+    for method in methods:
+        fig, axes = plt.subplots(
+            nrows=3,
+            ncols=3,
+            figsize=(13, 12),
+            sharex=True,
+            sharey=True,
+            layout="constrained",
+        )
 
-    for i, dx in enumerate(spatial):
-        for j, dt in enumerate(temporal):
+        for i, dx in enumerate(spatial):
+            for j, dt in enumerate(temporal):
 
-            if dx == "2.0mm" and dt == "20ms":
-                continue
+                mask = load_error_mask(
+                    f"../../UM13_in_silico_results/{dx}/{dt}/SNR{snr}/{method}/UM13_{dx}_{dt}_SNR{snr}_{method}_ERR_1.mat"
+                )
 
-            cfd_arr, ste_arr = ste_load_noisey(data_dir_prefix, dx, dt, "SNR10", 25)
+                pressure_arr = np.empty(shape=0)
+                for n in range(1, n_realizations + 1):
 
-            hist_plot_noise(cfd_arr, ste_arr, dx, dt, axes[i, j])
+                    pressure = load_pressure_data(
+                        f"../../UM13_in_silico_results/{dx}/{dt}/SNR{snr}/{method}/UM13_{dx}_{dt}_SNR{snr}_{method}_{n}.mat",
+                        method,
+                        mask,
+                    )
 
-    img = axes[0, 0].get_images()[0]
-    cbar = fig.colorbar(img, ax=axes, format=mtick.PercentFormatter(1.0))
-    cbar.set_label(label="Distribution per Column", fontsize=18)
-    cbar.ax.tick_params(labelsize=16)
+                    pressure_arr = np.concatenate((pressure_arr, pressure))
 
-    cols = [r"$\Delta \mathregular{P_{CFD}}$ [mmHg]"] * 4
-    rows = [r"$\Delta \mathregular{P_{STE}}$ [mmHg]"] * 2
+                # load data and get arrays for regression out
+                p_cfd = load_cfd_data(
+                    f"../../UM13_P_CFD/{dx}/UM13_{dx}_{dt}_shifted.mat",
+                    mask,
+                )
 
-    for ax, col in zip(axes[-1], cols):
-        ax.set_xlabel(col, fontsize=16)
+                cfd_arr = np.tile(p_cfd, n_realizations)
 
-    for ax, row in zip(axes[:, 0], rows):
-        ax.set_ylabel(row, fontsize=16)
+                if snr == "inf":
+                    histogram(p_cfd, pressure, dx, dt, axes[i, j])
 
-    # save big figure
-    fig.savefig(f"UM13_SNR10_correlation.svg")
-    fig.savefig(f"UM13_SNR10_correlation.png", dpi=400)
+                else:
 
-    # plt.show()
+                    # do plotting and regression
+                    histogram_discrete(cfd_arr, pressure_arr, dx, dt, axes[i, j])
 
+        img = axes[0, 0].get_images()[0]
+        cbar = fig.colorbar(img, ax=axes, format=mtick.PercentFormatter(1.0))
+        cbar.set_label(label="Distribution per Column", fontsize=18)
+        cbar.ax.tick_params(labelsize=16)
 
-def snr30():
-    data_dir_prefix = r"D:/UM13/baseline_results"
+        cols = [r"$\Delta \mathregular{P_{CFD}}$ [mmHg]"] * 3
+        rows = [rf"$\Delta \mathregular{{P_{{{method}}}}}$ [mmHg]"] * 3
 
-    spatial = ["1.5mm", "3mm"]
-    temporal = ["10ms", "20ms", "40ms", "60ms"]
+        for ax, col in zip(axes[-1], cols):
+            ax.set_xlabel(col, fontsize=16)
 
-    fig, axes = plt.subplots(
-        nrows=2,
-        ncols=4,
-        figsize=(16, 7),
-        sharex=True,
-        sharey=True,
-        layout="constrained",
-    )
+        for ax, row in zip(axes[:, 0], rows):
+            ax.set_ylabel(row, fontsize=16)
 
-    for i, dx in enumerate(spatial):
-        for j, dt in enumerate(temporal):
+        # save big figure
+        fig.savefig(
+            f"../../UM13_in_silico_results/correlation_plots/UM13_{method}_SNR{snr}_correlation_test.svg"
+        )
+        fig.savefig(
+            f"../../UM13_in_silico_results/correlation_plots/UM13_{method}_SNR{snr}_correlation_test.pdf"
+        )
 
-            cfd_arr, ste_arr = ste_load_noisey(data_dir_prefix, dx, dt, "SNR30")
-
-            hist_plot_noise(cfd_arr, ste_arr, dx, dt, axes[i, j])
-
-    img = axes[0, 0].get_images()[0]
-    cbar = fig.colorbar(img, ax=axes, format=mtick.PercentFormatter(1.0))
-    cbar.set_label(label="Distribution per Column", fontsize=18)
-    cbar.ax.tick_params(labelsize=16)
-
-    cols = [r"$\Delta \mathregular{P_{CFD}}$ [mmHg]"] * 4
-    rows = [r"$\Delta \mathregular{P_{STE}}$ [mmHg]"] * 2
-
-    for ax, col in zip(axes[-1], cols):
-        ax.set_xlabel(col, fontsize=16)
-
-    for ax, row in zip(axes[:, 0], rows):
-        ax.set_ylabel(row, fontsize=16)
-
-    # save big figure
-    fig.savefig(f"UM13_SNR30_correlation.svg")
-    fig.savefig(f"UM13_SNR30_correlation.png", dpi=400)
-
-    # plt.show()
+        plt.close(fig)
 
 
 if __name__ == "__main__":
-    baseline()
-    # snr30()
-    # snr10()
+    noise("inf", 1)
+    noise(10, 25)
+    noise(30, 25)
