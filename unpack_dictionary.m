@@ -7,5 +7,4 @@ function value = unpack_dictionary(dictionary_path, key)
     value = dictionary(key);
     value = value{1};
 
-
 end

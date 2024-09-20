@@ -14,6 +14,7 @@ from pyevtk.hl import imageToVTK
 from tqdm import tqdm
 
 # FIXME: I might want to split this up further? Maybe separate classes that are linked somehow? Not sure...
+PA_TO_MMHG = 0.00750061683
 
 
 class PressureEstimationDataset:
@@ -21,7 +22,7 @@ class PressureEstimationDataset:
     Some assumptions have been made in order to streamline the data loading process, making this code unsuitable
     for general use without modification.COULD use matlab to load data but it's kind of annoying... will avoid for now
 
-    #FIXME: list args, methods, attributes, etc. in docstring
+    # FIXME: list args, methods, attributes, etc. in docstring
     """
 
     def __init__(
@@ -32,9 +33,10 @@ class PressureEstimationDataset:
         self.dx = dx
         self.dt = dt
         self.snr = snr
-        self.vel_dir = f"../../vwerp/UM13_vel_input/{dx}mm/{dt}ms/"
-        self.seg_dir = f"../../vwerp/UM13_vel_input/{dx}mm/"
-        self.results_dir = f"../../UM13_in_silico_results/{dx}mm/{dt}ms/{snr}/"
+        self.vel_dir = f"/home/bkhardy/vwerp/UM13_vel_input/{dx}mm/{dt}ms/"
+        self.seg_dir = f"/home/bkhardy/vwerp/UM13_vel_input/{dx}mm/"
+        self.results_dir = f"/home/bkhardy/UM13_in_silico_results/{dx}mm/{dt}ms/{snr}/"
+        self.cfd_dir = f"/home/bkhardy/UM13_P_CFD/{dx}mm/"
 
         if "vel" in load:
             self.vel_mask = self.load_vel_mask()
@@ -51,6 +53,9 @@ class PressureEstimationDataset:
 
         if "ppe_err" in load:
             self.ppe_err = self.load_error("PPE", 1)
+
+        if "cfd" in load:
+            self.cfd = self.load_cfd_pressure()
         # self.inlet = self.load_inlet()
         # self.outlet = self.load_outlet()
 
@@ -283,6 +288,127 @@ class PressureEstimationDataset:
                 cellData={"Relative Pressure Absolute Error": p},
             )
 
+    def load_cfd_pressure(self) -> dict:
+        """Function to load pressure field and associated attributes for cfd since they have different data structures.
+
+        Returns:
+            dict: Dictionary containing dx, mask and pressure field.
+        """
+
+        pres_dict = {}
+        with h5py.File(
+            f"{self.cfd_dir}UM13_{self.dx}mm_{self.dt}ms_shifted.mat",
+        ) as file:
+
+            pres_dict["dx"] = np.squeeze(file["dx"][:]).tolist()
+            pres_dict["mask"] = np.asarray(file["mask"]).T
+            pres_dict["pressure"] = np.asarray(file["P"]).T
+
+        return pres_dict
+
+    def export_cfd_to_vti(self, output_dir: str, mask_data: bool = False) -> None:
+        """Function to export cfd pressure fields to VTI format.
+
+        Args:
+            output_dir (str): Directory to export pressure to. Does not need trailing slash.
+            mask_data (bool, optional): Whether or not mask will be exported. Defaults to False.
+        """
+
+        pres_dict = self.cfd
+
+        # make sure output path exists, create directory if not
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        # write mask itself
+        if mask_data:
+            out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_P_CFD_mask"
+            imageToVTK(
+                out_path, spacing=pres_dict["dx"], cellData={"mask": pres_dict["mask"]}
+            )
+
+        # write pressure field one timestep at a time
+        n_timesteps = int(pres_dict["pressure"].shape[-1])
+        for t in tqdm(range(n_timesteps)):
+            p = pres_dict["pressure"][:, :, :, t].copy()
+            out_path = f"{output_dir}/UM13_{self.dx}mm_{self.dt}ms_P_CFD_{t:02d}"
+            imageToVTK(
+                out_path, spacing=pres_dict["dx"], cellData={"Relative Pressure": p}
+            )
+
+
+def invitro_to_vti(data_path: str, output_dir: str, output_name: str) -> None:
+    """speedy function to both load and convert vti data... if I import on own does the top stuff load idk
+
+    Args:
+        data_path (str): _description_
+        output_dir (str): _description_
+        output_name (str): _description_
+    """
+
+    with h5py.File(data_path) as file:
+        pressure = np.asarray(
+            file["P"]
+        ).T  # * PA_TO_MMHG # ONLY STE IS IN PASCALS DANG  # convert to mmHg because I saved in Pascals like a dummy
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    n_timesteps = int(pressure.shape[-1])
+    for t in tqdm(range(n_timesteps)):
+        p = pressure[:, :, :, t].copy()
+        out_path = f"{output_dir}/{output_name}_{t:02d}"
+        imageToVTK(
+            out_path,
+            spacing=(0.0015 / 2, 0.0015 / 2, 0.0015 / 2),
+            cellData={"Relative Pressure": p},
+        )
+
+
+def mag_to_vti(
+    data_path: str, output_dir: str, output_name: str, model_name: str
+) -> None:
+    """Speedy function to fix the dumbass mag images I was provided
+
+    Args:
+        data_path (str): _description_
+        output_dir (str): _description_
+        output_name (str): _description_
+        model_name (str): TBAD_OR, TBAD_EXT, TBAD_ENT
+    """
+    with h5py.File(data_path) as file:
+        mag = np.asarray(file[model_name]).T
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    out_path = f"{output_dir}/{output_name}"
+    imageToVTK(out_path, spacing=(0.0015, 0.0015, 0.0015), cellData={"Magnitude": mag})
+
+
+def flow_to_vti(data_path: str, output_dir: str, output_name: str):
+
+    with h5py.File(data_path) as f:
+        v_pointers = f["v"][:]
+        u = f[v_pointers[0, 0]]["im"][:].T
+        v = f[v_pointers[1, 0]]["im"][:].T
+        w = f[v_pointers[2, 0]]["im"][:].T
+        vel_dx = np.squeeze(f[v_pointers[0, 0]]["dx"][:]).tolist()
+
+        mask = f["mask"][:].T
+
+    n_timesteps = u.shape[-1]
+
+    # make sure output path exists, create directory if not
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    for t in tqdm(range(n_timesteps)):
+
+        u_t = u[:, :, :, t].copy() * mask
+        v_t = v[:, :, :, t].copy() * mask
+        w_t = w[:, :, :, t].copy() * mask
+
+        vel = (u_t, v_t, w_t)
+        out_path = f"{output_dir}/{output_name}_{t:02d}"
+        imageToVTK(out_path, spacing=vel_dx, cellData={"Velocity": vel})
+
 
 def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> None:
     """Function to automate the export of baseline velocity fields to VTI format.
@@ -302,9 +428,7 @@ def export_baseline_velocity(dx_list=(1.5, 2.0, 3.0), dt_list=(60, 40, 20)) -> N
             del current_dataset
 
 
-def main():
-    """main method."""
-
+def export_results():
     dx_list = [1.5, 2.0, 3.0]
     dt_list = [60, 40, 20]
     noise_list = ["SNRinf", "SNR30", "SNR10"]
@@ -328,6 +452,24 @@ def main():
                 del current_dataset
 
     # it would be fun to turn this into a command line tool :)
+
+
+def main():
+    """main method."""
+
+    dx_list = [1.5, 2.0, 3.0]
+    dt_list = [60, 40, 20]
+    snr = "SNRinf"
+
+    for dx in dx_list:
+        for dt in dt_list:
+            current_dataset = PressureEstimationDataset(dx, dt, snr, load="cfd")
+
+            current_dataset.export_cfd_to_vti(
+                f"/home/bkhardy/methods_paper_vti/UM13_pressure_cfd_vti/{dx}mm/{dt}ms"
+            )
+
+            del current_dataset
 
 
 if __name__ == "__main__":
