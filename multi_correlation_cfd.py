@@ -1,6 +1,7 @@
-""" This is a script that analyzes CFD data
+""" Script to produce multi-method correlation plots for in silico plane to plane analysis
 
-    [INSERT LONGER EXPLANATION HERE]
+    Brandon Hardy
+    09/21/2024 (AMERICAN DATE FORMAT!!!)
 """
 
 from itertools import product
@@ -12,7 +13,17 @@ import numpy as np
 from scipy import stats
 
 
-def dictionary_load(dict_path: str, keys: list, eng):
+def dictionary_load(dict_path: str, keys: list, eng) -> np.ndarray:
+    """Function to load pressure data from a dictionary file using matlab engine
+
+    Args:
+        dict_path (str): path to dictionary file
+        keys (list): name of planes to extract from dictionary
+        eng (_type_): initalized matlab engine
+
+    Returns:
+        np.ndarray: pressures from dictionary
+    """
 
     pressures = []
 
@@ -25,7 +36,16 @@ def dictionary_load(dict_path: str, keys: list, eng):
     return np.array(pressures)
 
 
-def multi_correlation_plot(cath_measurements, estimations: dict):
+def multi_correlation_plot(ground_truth: np.ndarray, estimations: dict) -> plt.Figure:
+    """Generates a multi-method correlation plot figure. No heatmap, just a scatter plot with regression lines.
+
+    Args:
+        ground_truth (np.ndarray): array of ground truth pressure values (e.g., CFD plane dP's)
+        estimations (dict): dictionary of method names and their respective pressure estimations
+
+    Returns:
+        plt.Figure: matplotlib figure of multi-method correlation plot
+    """
 
     # Regression Stuff
     color_list = ["red", "blue", "green"]
@@ -35,7 +55,7 @@ def multi_correlation_plot(cath_measurements, estimations: dict):
 
     for method_name, pressure in estimations.items():
 
-        reg = stats.linregress(cath_measurements, pressure)
+        reg = stats.linregress(ground_truth, pressure)
 
         if reg.intercept < 0.0:
             reg_stats = f"$y = {reg.slope:.3f}x {reg.intercept:.3f}$\n$r^2 = {reg.rvalue**2:.3f}$"
@@ -61,7 +81,7 @@ def multi_correlation_plot(cath_measurements, estimations: dict):
             linewidth="3",
             label=method_name,
         )
-        ax.scatter(cath_measurements, pressure, color=color)
+        ax.scatter(ground_truth, pressure, color=color)
 
     ax.plot(x, x, color="black", linestyle="--", linewidth=3)
 
@@ -74,29 +94,30 @@ def multi_correlation_plot(cath_measurements, estimations: dict):
     ax.set_ylabel(r"$\Delta \mathregular{P_{est}}$ [mmHg]", fontsize=22)
     ax.tick_params(axis="both", which="major", labelsize=16)
     ax.legend(fontsize=22)
-    # ax.tick_params(axis='both', which='minor', labelsize=12)
     fig.tight_layout()
 
     return fig
 
 
 def main():
+    """main function. Goal is to plot a correlation plot for each dx, dt combination with no added noise"""
 
     spatial = ["1.5mm", "2.0mm", "3.0mm"]
     temporal = ["20ms", "40ms", "60ms"]
+    # make combinations of parameters without a ton of nested for loops
+    spatiotemporal = product(spatial, temporal)
 
     methods = ["vWERP", "STE_dP", "PPE_dP"]
     keys = ["FL1", "FL2", "FL3", "FL4", "TL1", "TL2", "TL3", "TL4"]
 
     eng = matlab.engine.start_matlab()
 
-    # make combinations of parameters without a ton of nested for loops
-    spatiotemporal = product(spatial, temporal)
-
     for dx, dt in spatiotemporal:
+
         cfd_path = f"../../UM13_P_CFD/{dx}/UM13_{dx}_{dt}_shifted_dP.mat"
         cfd_data = dictionary_load(cfd_path, keys, eng)
         estimate_dict = {}
+
         for method in methods:
 
             dict_path = f"../../UM13_in_silico_results/{dx}/{dt}/SNRinf/{method}/UM13_{dx}_{dt}_SNRinf_{method}_1.mat"
