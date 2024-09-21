@@ -36,12 +36,16 @@ def dictionary_load(dict_path: str, keys: list, eng) -> np.ndarray:
     return np.array(pressures)
 
 
-def multi_correlation_plot(ground_truth: np.ndarray, estimations: dict) -> plt.Figure:
+def multi_correlation_plot(
+    ground_truth: np.ndarray, estimations: dict, dx: str, dt: str
+) -> plt.Figure:
     """Generates a multi-method correlation plot figure. No heatmap, just a scatter plot with regression lines.
 
     Args:
         ground_truth (np.ndarray): array of ground truth pressure values (e.g., CFD plane dP's)
         estimations (dict): dictionary of method names and their respective pressure estimations
+        dx (str): spatial resolution of the data
+        dt (str): temporal resolution of the data
 
     Returns:
         plt.Figure: matplotlib figure of multi-method correlation plot
@@ -89,7 +93,7 @@ def multi_correlation_plot(ground_truth: np.ndarray, estimations: dict) -> plt.F
     ax.set_aspect("equal")
     ax.set_ylim(bottom=x[0], top=x[1])
     ax.set_xlim(left=x[0], right=x[1])
-    ax.set_title("SNRinf In Silico 1.5mm x 40 ms Correlation Plot", fontsize=22)
+    ax.set_title(f"SNRinf In Silico {dx} x {dt} Correlation Plot", fontsize=22)
     ax.set_xlabel(r"$\Delta \mathregular{P_{CFD}}$ [mmHg]", fontsize=22)
     ax.set_ylabel(r"$\Delta \mathregular{P_{est}}$ [mmHg]", fontsize=22)
     ax.tick_params(axis="both", which="major", labelsize=16)
@@ -123,7 +127,7 @@ def main():
             dict_path = f"../../UM13_in_silico_results/{dx}/{dt}/SNRinf/{method}/UM13_{dx}_{dt}_SNRinf_{method}_1.mat"
             estimate_dict[method] = dictionary_load(dict_path, keys, eng)
 
-        all_fig = multi_correlation_plot(cfd_data, estimate_dict)
+        all_fig = multi_correlation_plot(cfd_data, estimate_dict, dx, dt)
         fig_path = Path("../../UM13_in_silico_results/multi_correlation_plots")
         fig_path.mkdir(parents=True, exist_ok=True)
         all_fig.savefig(fig_path / f"UM13_{dx}_{dt}_SNRinf_multi_correlation_plot.pdf")
